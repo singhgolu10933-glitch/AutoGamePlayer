@@ -8,32 +8,47 @@ class BlockGame(
     private val random: Random = Random.Default
 ) : GameModule<BlockState, Placement> {
 
-    override val id = "block-puzzle-001"
-    override val name = "Block Puzzle 001"
+    override val id: String = "block-puzzle-001"
 
-    private var running = false
-    private var state = freshState()
+    override val name: String = "Block Puzzle 001"
+
+    private var running: Boolean = false
+
+    private var state: BlockState = freshState()
 
     override fun initialize() {
         running = true
         state = freshState()
     }
 
-    override fun snapshot(): BlockState = state.copy(
-        board = state.copyBoard()
-    )
+    override fun snapshot(): BlockState {
+        return state.copy(
+            board = state.copyBoard()
+        )
+    }
 
-    override fun legalActions(state: BlockState): List<Placement> =
-        rules.legalPlacements(state)
+    override fun legalActions(
+        state: BlockState
+    ): List<Placement> {
+        return rules.legalPlacements(state)
+    }
 
     override fun execute(action: Placement): Boolean {
-        if (!running) return false
-        val next = rules.apply(state, action) ?: return false
+        if (!running) {
+            return false
+        }
+
+        val next = rules.apply(state, action)
+            ?: return false
+
         state = if (next.pieces.isEmpty()) {
-            next.copy(pieces = randomPieces())
+            next.copy(
+                pieces = randomPieces()
+            )
         } else {
             next
         }
+
         return true
     }
 
@@ -46,12 +61,16 @@ class BlockGame(
         state = freshState()
     }
 
-    private fun freshState(): BlockState =
-        BlockState(
+    private fun freshState(): BlockState {
+        return BlockState(
             board = rules.emptyBoard(),
             pieces = randomPieces()
         )
+    }
 
-    private fun randomPieces(): List<Shape> =
-        List(rules.piecesPerTurn) { Shapes.catalog.random(random) }
+    private fun randomPieces(): List<Shape> {
+        return List(rules.piecesPerTurn) {
+            Shapes.catalog.random(random)
+        }
+    }
 }
