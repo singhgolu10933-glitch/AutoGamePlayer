@@ -12,13 +12,13 @@ class BlockGame(
 
     override val name: String = "Block Puzzle 001"
 
-    private var running: Boolean = false
+    private var running = false
 
-    private var state: BlockState = freshState()
+    private var state: BlockState = createState()
 
     override fun initialize() {
         running = true
-        state = freshState()
+        state = createState()
     }
 
     override fun snapshot(): BlockState {
@@ -34,19 +34,17 @@ class BlockGame(
     }
 
     override fun execute(action: Placement): Boolean {
-        if (!running) {
-            return false
-        }
+        if (!running) return false
 
-        val next = rules.apply(state, action)
+        val nextState = rules.apply(state, action)
             ?: return false
 
-        state = if (next.pieces.isEmpty()) {
-            next.copy(
+        state = nextState
+
+        if (state.pieces.isEmpty()) {
+            state = state.copy(
                 pieces = randomPieces()
             )
-        } else {
-            next
         }
 
         return true
@@ -58,10 +56,10 @@ class BlockGame(
 
     fun reset() {
         running = false
-        state = freshState()
+        state = createState()
     }
 
-    private fun freshState(): BlockState {
+    private fun createState(): BlockState {
         return BlockState(
             board = rules.emptyBoard(),
             pieces = randomPieces()
