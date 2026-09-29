@@ -3,6 +3,15 @@
 <manifest
     xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+        Development / sideload build:
+        Allows the player to discover installed target
+        games/apps on the device.
+    -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES" />
+
+    <!-- Screen capture foreground service -->
     <uses-permission
         android:name="android.permission.FOREGROUND_SERVICE" />
 
@@ -31,6 +40,7 @@
 
         </activity>
 
+        <!-- Accessibility control service -->
         <service
             android:name=".AutoPlayerAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -49,6 +59,7 @@
 
         </service>
 
+        <!-- User-approved screen observation -->
         <service
             android:name=".ScreenCaptureService"
             android:exported="false"
