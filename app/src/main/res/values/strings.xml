@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<resources>
+
+    <string name="app_name">
+        Auto Game Player
+    </string>
+
+    <string name="accessibility_description">
+        Allows Auto Game Player to observe the selected game interface and perform user-enabled game control actions.
+    </string>
+
+</resources>
