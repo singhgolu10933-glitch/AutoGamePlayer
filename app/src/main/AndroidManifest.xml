@@ -8,7 +8,7 @@
         android:theme="@style/AppTheme">
 
         <activity
-            android:name=".MainActivity"
+            android:name="com.autogameplayer.MainActivity"
             android:exported="true">
 
             <intent-filter>
