@@ -1,577 +1,365 @@
 package com.autogameplayer
 
 import android.app.Activity
+import android.content.ComponentName
+import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.graphics.*
-import android.graphics.drawable.GradientDrawable
+import android.provider.Settings
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
-import android.widget.*
-import com.autogameplayer.blockpuzzle.*
-import java.util.concurrent.Executors
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.Spinner
+import android.widget.TextView
 
 class MainActivity : Activity() {
 
-    private lateinit var game: BlockGame
-    private lateinit var gameView: BlockPuzzleView
-    private lateinit var scoreText: TextView
-    private lateinit var statusText: TextView
-    private lateinit var autoButton: Button
+    private lateinit var serviceStatus: TextView
+    private lateinit var selectedGameText: TextView
+    private lateinit var gameSpinner: Spinner
 
-    private val executor = Executors.newSingleThreadExecutor()
-    private val handler = Handler(Looper.getMainLooper())
+    private val preferences by lazy {
+        getSharedPreferences("player_settings", MODE_PRIVATE)
+    }
 
-    private var autoPlaying = false
+    private var games = emptyList<GameInfo>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        game = BlockGame()
-        game.initialize()
-
-        buildUi()
+        createInterface()
+        loadInstalledGames()
+        updateServiceStatus()
+        updateSelectedGame()
     }
 
-    private fun buildUi() {
+    override fun onResume() {
+        super.onResume()
+
+        updateServiceStatus()
+        updateSelectedGame()
+    }
+
+    private fun createInterface() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.rgb(10, 12, 18))
-            setPadding(20, 20, 20, 20)
+            setPadding(32, 40, 32, 40)
+            gravity = Gravity.TOP
+        }
+
+        val scrollView = ScrollView(this)
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.TOP
         }
 
         val title = TextView(this).apply {
             text = "AUTO GAME PLAYER"
-            textSize = 25f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
+            textSize = 28f
             gravity = Gravity.CENTER
+            setPadding(0, 20, 0, 10)
         }
 
-        root.addView(
-            title,
-            LinearLayout.LayoutParams(
-                -1,
-                55
-            )
-        )
+        val subtitle = TextView(this).apply {
+            text = "Universal AI Game Player"
+            textSize = 19f
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 25)
+        }
 
-        scoreText = TextView(this).apply {
+        val description = TextView(this).apply {
+            text =
+                "Select an installed Android game. " +
+                "The player engine will observe the selected game " +
+                "and later make normal human-like decisions."
+            textSize = 16f
+            setPadding(0, 0, 0, 25)
+        }
+
+        serviceStatus = TextView(this).apply {
             textSize = 17f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
+            setPadding(0, 15, 0, 15)
         }
 
-        root.addView(
-            scoreText,
-            LinearLayout.LayoutParams(-1, 45)
-        )
+        val enableButton = Button(this).apply {
+            text = "ENABLE GAME CONTROL"
+            setOnClickListener {
+                try {
+                    startActivity(
+                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    )
+                } catch (_: Exception) {
+                    startActivity(
+                        Intent(Settings.ACTION_SETTINGS)
+                    )
+                }
+            }
+        }
 
-        gameView = BlockPuzzleView()
+        val refreshButton = Button(this).apply {
+            text = "REFRESH STATUS"
+            setOnClickListener {
+                updateServiceStatus()
+                updateSelectedGame()
+                loadInstalledGames()
+            }
+        }
 
+        val gameTitle = TextView(this).apply {
+            text = "SELECT TARGET GAME"
+            textSize = 20f
+            setPadding(0, 30, 0, 10)
+        }
+
+        gameSpinner = Spinner(this)
+
+        selectedGameText = TextView(this).apply {
+            textSize = 15f
+            setPadding(0, 15, 0, 15)
+        }
+
+        val saveGameButton = Button(this).apply {
+            text = "SAVE SELECTED GAME"
+            setOnClickListener {
+                val position = gameSpinner.selectedItemPosition
+
+                if (position >= 0 && position < games.size) {
+                    val game = games[position]
+
+                    preferences.edit()
+                        .putString("target_package", game.packageName)
+                        .putString("target_name", game.name)
+                        .apply()
+
+                    updateSelectedGame()
+                }
+            }
+        }
+
+        val engineStatus = TextView(this).apply {
+            text =
+                """
+                
+PLAYER ENGINE
+
+Status:
+Waiting for Accessibility Service
+
+Mode:
+Normal / Human-like
+
+Extreme automation:
+Disabled
+
+Next:
+Screen Observation → AI Decision → Safe Gesture
+                """.trimIndent()
+
+            textSize = 16f
+            setPadding(0, 25, 0, 20)
+        }
+
+        val stopButton = Button(this).apply {
+            text = "STOP PLAYER"
+            setOnClickListener {
+                AutoPlayerAccessibilityService.stopPlayer(this@MainActivity)
+            }
+        }
+
+        content.addView(title)
+        content.addView(subtitle)
+        content.addView(description)
+        content.addView(serviceStatus)
+        content.addView(enableButton)
+        content.addView(refreshButton)
+        content.addView(gameTitle)
+        content.addView(gameSpinner)
+        content.addView(selectedGameText)
+        content.addView(saveGameButton)
+        content.addView(engineStatus)
+        content.addView(stopButton)
+
+        scrollView.addView(content)
         root.addView(
-            gameView,
+            scrollView,
             LinearLayout.LayoutParams(
-                -1,
-                0,
-                1f
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
             )
         )
-
-        statusText = TextView(this).apply {
-            text = "Select a piece, then tap a board cell"
-            textSize = 14f
-            setTextColor(Color.LTGRAY)
-            gravity = Gravity.CENTER
-        }
-
-        root.addView(
-            statusText,
-            LinearLayout.LayoutParams(-1, 45)
-        )
-
-        val buttons = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        val resetButton = makeButton("RESET")
-
-        autoButton = makeButton("AUTO PLAY")
-
-        buttons.addView(
-            resetButton,
-            LinearLayout.LayoutParams(
-                0,
-                58,
-                1f
-            ).apply {
-                setMargins(4, 4, 4, 4)
-            }
-        )
-
-        buttons.addView(
-            autoButton,
-            LinearLayout.LayoutParams(
-                0,
-                58,
-                1f
-            ).apply {
-                setMargins(4, 4, 4, 4)
-            }
-        )
-
-        root.addView(buttons)
-
-        resetButton.setOnClickListener {
-            stopAuto()
-            game.reset()
-            game.initialize()
-            statusText.text = "New game started"
-            gameView.selectedPiece = -1
-            gameView.invalidate()
-            updateInfo()
-        }
-
-        autoButton.setOnClickListener {
-            if (autoPlaying) {
-                stopAuto()
-            } else {
-                startAuto()
-            }
-        }
 
         setContentView(root)
-
-        updateInfo()
     }
 
-    private fun makeButton(text: String): Button {
-        return Button(this).apply {
-            this.text = text
-            textSize = 14f
-            setTextColor(Color.WHITE)
+    private fun loadInstalledGames() {
 
-            background = GradientDrawable().apply {
-                cornerRadius = 18f
-                setColor(Color.rgb(35, 75, 140))
-            }
-        }
-    }
-
-    private fun updateInfo() {
-        val state = game.snapshot()
-
-        scoreText.text =
-            "SCORE  ${state.score}     LEVEL  ${state.level}     MOVES  ${state.moves}"
-
-        if (!BlockRules().hasMove(state)) {
-            statusText.text = "GAME OVER"
-        }
-    }
-
-    private fun startAuto() {
-
-        autoPlaying = true
-        autoButton.text = "STOP AUTO"
-        statusText.text = "AI is playing..."
-
-        autoStep()
-    }
-
-    private fun stopAuto() {
-
-        autoPlaying = false
-        autoButton.text = "AUTO PLAY"
-        statusText.text = "Auto Play stopped"
-    }
-
-    private fun autoStep() {
-
-        if (!autoPlaying) return
-
-        val state = game.snapshot()
-        val rules = BlockRules()
-
-        if (!rules.hasMove(state)) {
-            stopAuto()
-            statusText.text = "GAME OVER"
-            gameView.invalidate()
-            return
+        val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
         }
 
-        executor.execute {
-
-            try {
-
-                val ai = BlockAi()
-
-                val actions = game.legalActions(state)
-
-                val action = ai.choose(
-                    state,
-                    actions
-                )
-
-                if (action != null) {
-
-                    game.execute(action)
-
-                    runOnUiThread {
-
-                        updateInfo()
-                        gameView.invalidate()
-
-                        if (autoPlaying) {
-                            handler.postDelayed(
-                                { autoStep() },
-                                180
-                            )
-                        }
-                    }
-
-                } else {
-
-                    runOnUiThread {
-                        stopAuto()
-                        statusText.text = "No legal move"
-                    }
-                }
-
-            } catch (e: Exception) {
-
-                runOnUiThread {
-                    stopAuto()
-                    statusText.text =
-                        "AI error: ${e.message ?: "unknown"}"
-                }
-            }
-        }
-    }
-
-    override fun onDestroy() {
-
-        stopAuto()
-        handler.removeCallbacksAndMessages(null)
-        executor.shutdownNow()
-
-        super.onDestroy()
-    }
-
-    inner class BlockPuzzleView : View(this@MainActivity) {
-
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-
-        var selectedPiece = -1
-
-        private var boardLeft = 0f
-        private var boardTop = 0f
-        private var cellSize = 0f
-
-        private var pieceTop = 0f
-
-        private val boardColor =
-            Color.rgb(25, 29, 40)
-
-        private val emptyColor =
-            Color.rgb(42, 47, 62)
-
-        private val gridColor =
-            Color.rgb(65, 70, 88)
-
-        private val pieceColors = intArrayOf(
-            Color.rgb(0, 210, 255),
-            Color.rgb(255, 170, 0),
-            Color.rgb(120, 90, 255)
+        val activities = packageManager.queryIntentActivities(
+            launcherIntent,
+            0
         )
 
-        init {
-            isFocusable = true
-        }
+        games = activities
+            .mapNotNull { resolveInfo ->
 
-        override fun onDraw(canvas: Canvas) {
+                val activityInfo = resolveInfo.activityInfo
+                    ?: return@mapNotNull null
 
-            super.onDraw(canvas)
+                val packageName = activityInfo.packageName
 
-            val state = game.snapshot()
-
-            val width = measuredWidth.toFloat()
-            val height = measuredHeight.toFloat()
-
-            val boardSize =
-                minOf(width - 30f, height * 0.63f)
-
-            cellSize = boardSize / 9f
-
-            boardLeft =
-                (width - boardSize) / 2f
-
-            boardTop = 20f
-
-            pieceTop =
-                boardTop + boardSize + 35f
-
-            drawBoard(
-                canvas,
-                state
-            )
-
-            drawPieces(
-                canvas,
-                state
-            )
-
-            updateInfo()
-        }
-
-        private fun drawBoard(
-            canvas: Canvas,
-            state: BlockState
-        ) {
-
-            paint.style = Paint.Style.FILL
-            paint.color = boardColor
-
-            canvas.drawRoundRect(
-                boardLeft - 6,
-                boardTop - 6,
-                boardLeft + cellSize * 9 + 6,
-                boardTop + cellSize * 9 + 6,
-                18f,
-                18f,
-                paint
-            )
-
-            for (r in 0 until 9) {
-
-                for (c in 0 until 9) {
-
-                    val left =
-                        boardLeft + c * cellSize + 2
-
-                    val top =
-                        boardTop + r * cellSize + 2
-
-                    val right =
-                        boardLeft + (c + 1) * cellSize - 2
-
-                    val bottom =
-                        boardTop + (r + 1) * cellSize - 2
-
-                    paint.color =
-                        if (state.board[r][c]) {
-                            pieceColors[(r + c) % pieceColors.size]
-                        } else {
-                            emptyColor
-                        }
-
-                    canvas.drawRoundRect(
-                        left,
-                        top,
-                        right,
-                        bottom,
-                        7f,
-                        7f,
-                        paint
-                    )
-
-                    if (!state.board[r][c]) {
-
-                        paint.style = Paint.Style.STROKE
-                        paint.strokeWidth = 1f
-                        paint.color = gridColor
-
-                        canvas.drawRoundRect(
-                            left,
-                            top,
-                            right,
-                            bottom,
-                            7f,
-                            7f,
-                            paint
-                        )
-
-                        paint.style = Paint.Style.FILL
-                    }
+                if (packageName == packageNameOfThisApp()) {
+                    return@mapNotNull null
                 }
+
+                val applicationInfo = activityInfo.applicationInfo
+                    ?: return@mapNotNull null
+
+                val label = applicationInfo
+                    .loadLabel(packageManager)
+                    ?.toString()
+                    ?.trim()
+
+                if (label.isNullOrEmpty()) {
+                    return@mapNotNull null
+                }
+
+                GameInfo(
+                    name = label,
+                    packageName = packageName
+                )
+            }
+            .distinctBy { it.packageName }
+            .sortedBy { it.name.lowercase() }
+
+        val names = mutableListOf<String>()
+
+        if (games.isEmpty()) {
+            names.add("No launchable apps found")
+        } else {
+            games.forEach {
+                names.add("${it.name}  •  ${it.packageName}")
             }
         }
 
-        private fun drawPieces(
-            canvas: Canvas,
-            state: BlockState
-        ) {
+        val adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            names
+        )
 
-            val slotWidth =
-                measuredWidth / 3f
+        adapter.setDropDownViewResource(
+            android.R.layout.simple_spinner_dropdown_item
+        )
 
-            for (index in state.pieces.indices) {
+        gameSpinner.adapter = adapter
 
-                val shape = state.pieces[index]
+        val savedPackage =
+            preferences.getString("target_package", null)
 
-                val centerX =
-                    slotWidth * index +
-                    slotWidth / 2f
+        if (savedPackage != null) {
+            val index = games.indexOfFirst {
+                it.packageName == savedPackage
+            }
 
-                val scale =
-                    minOf(
-                        25f,
-                        slotWidth / 7f
-                    )
-
-                val shapeWidth =
-                    shape.width * scale
-
-                val shapeHeight =
-                    shape.height * scale
-
-                val startX =
-                    centerX - shapeWidth / 2f
-
-                val startY =
-                    pieceTop
-
-                if (index == selectedPiece) {
-
-                    paint.color =
-                        Color.WHITE
-
-                    paint.style =
-                        Paint.Style.STROKE
-
-                    paint.strokeWidth = 4f
-
-                    canvas.drawRoundRect(
-                        centerX - slotWidth / 2f + 8,
-                        startY - 12,
-                        centerX + slotWidth / 2f - 8,
-                        startY + 95,
-                        15f,
-                        15f,
-                        paint
-                    )
-
-                    paint.style =
-                        Paint.Style.FILL
-                }
-
-                shape.cells.forEach { cell ->
-
-                    val left =
-                        startX + cell.col * scale
-
-                    val top =
-                        startY + cell.row * scale
-
-                    paint.color =
-                        pieceColors[index % pieceColors.size]
-
-                    canvas.drawRoundRect(
-                        left + 2,
-                        top + 2,
-                        left + scale - 2,
-                        top + scale - 2,
-                        6f,
-                        6f,
-                        paint
-                    )
-                }
+            if (index >= 0) {
+                gameSpinner.setSelection(index)
             }
         }
 
-        override fun onTouchEvent(
-            event: MotionEvent
-        ): Boolean {
+        gameSpinner.onItemSelectedListener =
+            object : AdapterView.OnItemSelectedListener {
 
-            when (event.action) {
+                override fun onItemSelected(
+                    parent: AdapterView<*>?,
+                    view: View?,
+                    position: Int,
+                    id: Long
+                ) {
+                    if (position >= 0 && position < games.size) {
+                        val game = games[position]
 
-                MotionEvent.ACTION_DOWN -> {
-
-                    val x = event.x
-                    val y = event.y
-
-                    if (y >= pieceTop) {
-
-                        val index =
-                            (x / (measuredWidth / 3f))
-                                .toInt()
-
-                        val state =
-                            game.snapshot()
-
-                        if (
-                            index >= 0 &&
-                            index < state.pieces.size
-                        ) {
-
-                            selectedPiece = index
-
-                            statusText.text =
-                                "Piece ${index + 1} selected — tap board"
-
-                            invalidate()
-
-                            return true
-                        }
+                        selectedGameText.text =
+                            "Selected:\n${game.name}\n${game.packageName}"
                     }
-
-                    return true
                 }
 
-                MotionEvent.ACTION_UP -> {
-
-                    if (selectedPiece >= 0) {
-
-                        val col =
-                            ((event.x - boardLeft) /
-                                    cellSize).toInt()
-
-                        val row =
-                            ((event.y - boardTop) /
-                                    cellSize).toInt()
-
-                        val state =
-                            game.snapshot()
-
-                        if (
-                            row in 0 until 9 &&
-                            col in 0 until 9
-                        ) {
-
-                            val action =
-                                Placement(
-                                    selectedPiece,
-                                    row,
-                                    col
-                                )
-
-                            if (game.execute(action)) {
-
-                                statusText.text =
-                                    "Piece placed!"
-
-                                selectedPiece = -1
-
-                                updateInfo()
-                                invalidate()
-
-                                return true
-
-                            } else {
-
-                                statusText.text =
-                                    "Cannot place here"
-                            }
-                        }
-                    }
-
-                    return true
+                override fun onNothingSelected(
+                    parent: AdapterView<*>?
+                ) {
                 }
             }
+    }
 
-            return true
+    private fun updateServiceStatus() {
+
+        val enabled = isAccessibilityServiceEnabled()
+
+        if (enabled) {
+            serviceStatus.text =
+                "● Game Control: ENABLED"
+        } else {
+            serviceStatus.text =
+                "○ Game Control: NOT ENABLED\n\n" +
+                "Tap ENABLE GAME CONTROL and enable Auto Game Player."
         }
     }
+
+    private fun updateSelectedGame() {
+
+        val name =
+            preferences.getString("target_name", null)
+
+        val packageName =
+            preferences.getString("target_package", null)
+
+        if (name != null && packageName != null) {
+            selectedGameText.text =
+                "Selected Game:\n$name\n$packageName"
+        } else {
+            selectedGameText.text =
+                "Selected Game:\nNone"
+        }
+    }
+
+    private fun isAccessibilityServiceEnabled(): Boolean {
+
+        val enabledServices = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+
+        val expected = ComponentName(
+            this,
+            AutoPlayerAccessibilityService::class.java
+        )
+
+        val expectedName = expected.flattenToString()
+
+        return enabledServices
+            .split(':')
+            .any {
+                it.equals(
+                    expectedName,
+                    ignoreCase = true
+                )
+            }
+    }
+
+    private fun packageNameOfThisApp(): String {
+        return packageName
+    }
+
+    data class GameInfo(
+        val name: String,
+        val packageName: String
+    )
 }
