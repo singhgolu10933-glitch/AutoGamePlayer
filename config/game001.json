@@ -1,1 +1,17 @@
-
+{
+  "boardSize": 9,
+  "piecesPerTurn": 3,
+  "scorePerBlock": 10,
+  "scorePerLine": 100,
+  "targetPerLevel": 2000,
+  "ai": {
+    "lookAheadDepth": 2,
+    "tickMilliseconds": 20,
+    "lineWeight": 28.0,
+    "mobilityWeight": 12.0,
+    "spaceWeight": 1.2,
+    "fragmentationWeight": 5.0,
+    "holeWeight": 2.0,
+    "centerWeight": 0.4
+  }
+}
