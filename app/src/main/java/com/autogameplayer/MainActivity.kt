@@ -36,8 +36,7 @@ class MainActivity : Activity() {
     private val apps =
         mutableListOf<AppEntry>()
 
-    private var selectedPackage:
-            String? = null
+    private var selectedPackage: String? = null
 
     private lateinit var statusText: TextView
     private lateinit var observationText: TextView
@@ -60,6 +59,10 @@ class MainActivity : Activity() {
 
     private lateinit var appSpinner: Spinner
 
+    // ============================================================
+    // AUTO REFRESH
+    // ============================================================
+
     private val refreshRunnable =
         object : Runnable {
 
@@ -75,7 +78,7 @@ class MainActivity : Activity() {
         }
 
     // ============================================================
-    // CREATE
+    // ON CREATE
     // ============================================================
 
     override fun onCreate(
@@ -92,13 +95,15 @@ class MainActivity : Activity() {
 
         loadSavedTarget()
 
+        updateStatus()
+
         window.decorView.post(
             refreshRunnable
         )
     }
 
     // ============================================================
-    // UI
+    // BUILD UI
     // ============================================================
 
     private fun buildUi() {
@@ -131,6 +136,10 @@ class MainActivity : Activity() {
                     LinearLayout.VERTICAL
             }
 
+        // ========================================================
+        // HEADER
+        // ========================================================
+
         content.addView(
             textView(
                 "AUTO GAME PLAYER",
@@ -151,9 +160,9 @@ class MainActivity : Activity() {
             spacer(18)
         )
 
-        // --------------------------------------------------------
-        // ACCESSIBILITY
-        // --------------------------------------------------------
+        // ========================================================
+        // CONTROL ACCESS
+        // ========================================================
 
         content.addView(
             sectionTitle(
@@ -193,9 +202,9 @@ class MainActivity : Activity() {
             spacer(18)
         )
 
-        // --------------------------------------------------------
-        // TARGET
-        // --------------------------------------------------------
+        // ========================================================
+        // TARGET GAME
+        // ========================================================
 
         content.addView(
             sectionTitle(
@@ -217,6 +226,7 @@ class MainActivity : Activity() {
                     "SELECT TARGET GAME"
 
                 setOnClickListener {
+
                     saveSelectedTarget()
                 }
             }
@@ -229,6 +239,7 @@ class MainActivity : Activity() {
                     "OPEN SELECTED GAME"
 
                 setOnClickListener {
+
                     launchSelectedGame()
                 }
             }
@@ -238,9 +249,9 @@ class MainActivity : Activity() {
             spacer(18)
         )
 
-        // --------------------------------------------------------
-        // SCREEN
-        // --------------------------------------------------------
+        // ========================================================
+        // SCREEN OBSERVATION
+        // ========================================================
 
         content.addView(
             sectionTitle(
@@ -266,6 +277,7 @@ class MainActivity : Activity() {
                     "START SCREEN OBSERVATION"
 
                 setOnClickListener {
+
                     requestScreenCapture()
                 }
             }
@@ -291,9 +303,9 @@ class MainActivity : Activity() {
             spacer(18)
         )
 
-        // --------------------------------------------------------
-        // VISION
-        // --------------------------------------------------------
+        // ========================================================
+        // VISION STATUS
+        // ========================================================
 
         content.addView(
             sectionTitle(
@@ -336,19 +348,33 @@ class MainActivity : Activity() {
                 false
             )
 
-        content.addView(gameText)
-        content.addView(boardText)
-        content.addView(occupiedText)
-        content.addView(piecesText)
-        content.addView(confidenceText)
+        content.addView(
+            gameText
+        )
+
+        content.addView(
+            boardText
+        )
+
+        content.addView(
+            occupiedText
+        )
+
+        content.addView(
+            piecesText
+        )
+
+        content.addView(
+            confidenceText
+        )
 
         content.addView(
             spacer(12)
         )
 
-        // --------------------------------------------------------
-        // PIECE SHAPES
-        // --------------------------------------------------------
+        // ========================================================
+        // DETECTED PIECE SHAPES
+        // ========================================================
 
         content.addView(
             sectionTitle(
@@ -393,9 +419,9 @@ class MainActivity : Activity() {
             spacer(18)
         )
 
-        // --------------------------------------------------------
-        // AI
-        // --------------------------------------------------------
+        // ========================================================
+        // AI DECISION
+        // ========================================================
 
         content.addView(
             sectionTitle(
@@ -438,19 +464,33 @@ class MainActivity : Activity() {
                 false
             )
 
-        content.addView(bestMoveText)
-        content.addView(bestPieceText)
-        content.addView(bestTargetText)
-        content.addView(bestScoreText)
-        content.addView(bestReasonText)
+        content.addView(
+            bestMoveText
+        )
+
+        content.addView(
+            bestPieceText
+        )
+
+        content.addView(
+            bestTargetText
+        )
+
+        content.addView(
+            bestScoreText
+        )
+
+        content.addView(
+            bestReasonText
+        )
 
         content.addView(
             spacer(18)
         )
 
-        // --------------------------------------------------------
-        // ENGINE
-        // --------------------------------------------------------
+        // ========================================================
+        // PLAYER ENGINE
+        // ========================================================
 
         content.addView(
             sectionTitle(
@@ -485,6 +525,10 @@ class MainActivity : Activity() {
         content.addView(
             spacer(20)
         )
+
+        // ========================================================
+        // STOP PLAYER
+        // ========================================================
 
         content.addView(
             Button(this).apply {
@@ -521,7 +565,7 @@ class MainActivity : Activity() {
     }
 
     // ============================================================
-    // TEXT
+    // TEXT VIEW
     // ============================================================
 
     private fun textView(
@@ -563,6 +607,10 @@ class MainActivity : Activity() {
         }
     }
 
+    // ============================================================
+    // SECTION TITLE
+    // ============================================================
+
     private fun sectionTitle(
         title: String
     ): TextView {
@@ -573,6 +621,10 @@ class MainActivity : Activity() {
             true
         )
     }
+
+    // ============================================================
+    // SPACER
+    // ============================================================
 
     private fun spacer(
         height: Int
@@ -589,7 +641,7 @@ class MainActivity : Activity() {
     }
 
     // ============================================================
-    // APPS
+    // LOAD APPS
     // ============================================================
 
     private fun loadApps() {
@@ -627,14 +679,17 @@ class MainActivity : Activity() {
                 continue
             }
 
+            val appName =
+                appInfo
+                    .loadLabel(
+                        packageManager
+                    )
+                    .toString()
+
             apps.add(
                 AppEntry(
                     name =
-                        appInfo
-                            .loadLabel(
-                                packageManager
-                            )
-                            .toString(),
+                        appName,
 
                     packageName =
                         appInfo.packageName
@@ -662,7 +717,7 @@ class MainActivity : Activity() {
     }
 
     // ============================================================
-    // SAVED TARGET
+    // LOAD SAVED TARGET
     // ============================================================
 
     private fun loadSavedTarget() {
@@ -690,6 +745,9 @@ class MainActivity : Activity() {
             appSpinner.setSelection(
                 index
             )
+
+            gameText.text =
+                "Game: ${apps[index].name}"
         }
     }
 
@@ -735,7 +793,7 @@ class MainActivity : Activity() {
     }
 
     // ============================================================
-    // LAUNCH
+    // OPEN GAME
     // ============================================================
 
     private fun launchSelectedGame() {
@@ -779,7 +837,7 @@ class MainActivity : Activity() {
     }
 
     // ============================================================
-    // SCREEN CAPTURE
+    // REQUEST SCREEN CAPTURE
     // ============================================================
 
     private fun requestScreenCapture() {
@@ -795,7 +853,13 @@ class MainActivity : Activity() {
         )
     }
 
-    @Deprecated("Deprecated Android API")
+    // ============================================================
+    // SCREEN CAPTURE RESULT
+    // ============================================================
+
+    @Deprecated(
+        "Deprecated Android API"
+    )
     override fun onActivityResult(
         requestCode: Int,
         resultCode: Int,
@@ -831,7 +895,7 @@ class MainActivity : Activity() {
     }
 
     // ============================================================
-    // STATUS
+    // UPDATE STATUS
     // ============================================================
 
     private fun updateStatus() {
@@ -840,8 +904,11 @@ class MainActivity : Activity() {
             if (
                 isAccessibilityServiceEnabled()
             ) {
+
                 "Accessibility Service: ENABLED"
+
             } else {
+
                 "Accessibility Service: DISABLED"
             }
 
@@ -850,8 +917,11 @@ class MainActivity : Activity() {
                 ScreenCaptureService
                     .isCapturing()
             ) {
+
                 "Screen Observation: RUNNING"
+
             } else {
+
                 "Screen Observation: STOPPED"
             }
 
@@ -859,7 +929,7 @@ class MainActivity : Activity() {
     }
 
     // ============================================================
-    // VISION UI
+    // VISION STATUS
     // ============================================================
 
     private fun updateVisionStatus() {
@@ -947,9 +1017,9 @@ class MainActivity : Activity() {
         confidenceText.text =
             "Confidence: $confidence%"
 
-        // --------------------------------------------------------
-        // SHAPES
-        // --------------------------------------------------------
+        // ========================================================
+        // PIECE SHAPES
+        // ========================================================
 
         piece1Text.text =
             formatPiece(
@@ -969,17 +1039,17 @@ class MainActivity : Activity() {
                 2
             )
 
-        // --------------------------------------------------------
+        // ========================================================
         // BEST MOVE
-        // --------------------------------------------------------
+        // ========================================================
 
-        val availableMove =
+        val moveAvailable =
             prefs.getBoolean(
                 "best_move_available",
                 false
             )
 
-        if (!availableMove) {
+        if (!moveAvailable) {
 
             bestMoveText.text =
                 "BEST MOVE: NO LEGAL MOVE"
@@ -1033,10 +1103,21 @@ class MainActivity : Activity() {
             "BEST MOVE: READY"
 
         bestPieceText.text =
-            "Piece: ${piece + 1}"
+            if (piece >= 0) {
+                "Piece: ${piece + 1}"
+            } else {
+                "Piece: --"
+            }
 
         bestTargetText.text =
-            "Target: Row $row, Column $column"
+            if (
+                row >= 0 &&
+                column >= 0
+            ) {
+                "Target: Row $row, Column $column"
+            } else {
+                "Target: --"
+            }
 
         bestScoreText.text =
             "Score: %.2f".format(
@@ -1048,7 +1129,7 @@ class MainActivity : Activity() {
     }
 
     // ============================================================
-    // FORMAT PIECE
+    // FORMAT PIECE SHAPE
     // ============================================================
 
     private fun formatPiece(
@@ -1067,40 +1148,55 @@ class MainActivity : Activity() {
             prefs.getString(
                 "piece_${index}_shape",
                 ""
-            )
-                ?: ""
+            ) ?: ""
 
         if (
             !detected ||
             shape.isBlank()
         ) {
+
             return "Piece ${index + 1}: NOT DETECTED"
         }
 
         val cells =
-            shape.split(";")
-                .mapNotNull {
+            shape
+                .split(";")
+                .mapNotNull { item ->
 
                     val parts =
-                        it.split(",")
+                        item.split(",")
 
                     if (
                         parts.size != 2
                     ) {
+                        return@mapNotNull null
+                    }
+
+                    val row =
+                        parts[0]
+                            .trim()
+                            .toIntOrNull()
+
+                    val column =
+                        parts[1]
+                            .trim()
+                            .toIntOrNull()
+
+                    if (
+                        row == null ||
+                        column == null
+                    ) {
                         null
                     } else {
-
                         Pair(
-                            parts[0].toIntOrNull()
-                                ?: return@mapNotNull null,
-
-                            parts[1].toIntOrNull()
-                                ?: return@mapNotNull null
+                            row,
+                            column
                         )
                     }
                 }
 
         if (cells.isEmpty()) {
+
             return "Piece ${index + 1}: INVALID"
         }
 
@@ -1114,11 +1210,27 @@ class MainActivity : Activity() {
                 it.second
             }
 
+        if (
+            maxRow < 0 ||
+            maxColumn < 0
+        ) {
+
+            return "Piece ${index + 1}: INVALID"
+        }
+
         val rows =
             maxRow + 1
 
         val columns =
             maxColumn + 1
+
+        if (
+            rows > 5 ||
+            columns > 5
+        ) {
+
+            return "Piece ${index + 1}: INVALID SHAPE"
+        }
 
         val grid =
             Array(rows) {
@@ -1127,12 +1239,21 @@ class MainActivity : Activity() {
                 }
             }
 
-        for ((row, column) in cells) {
+        for (
+            cell in cells
+        ) {
+
+            val row =
+                cell.first
+
+            val column =
+                cell.second
 
             if (
                 row in 0 until rows &&
                 column in 0 until columns
             ) {
+
                 grid[row][column] =
                     '■'
             }
@@ -1145,22 +1266,42 @@ class MainActivity : Activity() {
                 String(it)
             }
 
-        return "Piece ${index + 1}:\n$visual"
+        return (
+            "Piece ${index + 1}:\n" +
+                    visual
+            )
     }
 
     // ============================================================
-    // ACCESSIBILITY
+    // ACCESSIBILITY SERVICE CHECK
     // ============================================================
 
     private fun isAccessibilityServiceEnabled():
             Boolean {
 
-        val expected =
-            "$packageName/" +
-                    AutoPlayerAccessibilityService
-                        ::class.java.name
+        /*
+         * IMPORTANT:
+         *
+         * Do NOT use:
+         *
+         * AutoPlayerAccessibilityService
+         *     ::class.java.name
+         *
+         * because that was causing the Kotlin
+         * compiler error shown in GitHub Actions.
+         */
 
-        val enabled =
+        val serviceComponent =
+            android.content.ComponentName(
+                this,
+                AutoPlayerAccessibilityService::class.java
+            )
+
+        val expected =
+            serviceComponent
+                .flattenToString()
+
+        val enabledServices =
             Settings.Secure.getString(
                 contentResolver,
                 Settings.Secure
@@ -1168,10 +1309,11 @@ class MainActivity : Activity() {
             )
                 ?: return false
 
-        return enabled
+        return enabledServices
             .split(":")
-            .any {
-                it.equals(
+            .any { serviceName ->
+
+                serviceName.equals(
                     expected,
                     ignoreCase = true
                 )
