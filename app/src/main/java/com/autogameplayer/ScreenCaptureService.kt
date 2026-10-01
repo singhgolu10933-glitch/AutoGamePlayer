@@ -21,6 +21,7 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.util.DisplayMetrics
 import android.util.Log
+import com.autogameplayer.blockblitz.BlockBlitzAi
 import com.autogameplayer.blockblitz.BlockBlitzVision
 import java.nio.ByteBuffer
 
@@ -38,7 +39,7 @@ class ScreenCaptureService : Service() {
             2001
 
         private var instance:
-            ScreenCaptureService? = null
+                ScreenCaptureService? = null
 
         private var capturing =
             false
@@ -117,9 +118,9 @@ class ScreenCaptureService : Service() {
     private var lastFrameTime =
         0L
 
-    // =============================================================
+    // ============================================================
     // MEDIA PROJECTION CALLBACK
-    // =============================================================
+    // ============================================================
 
     private val mediaProjectionCallback =
         object :
@@ -142,13 +143,15 @@ class ScreenCaptureService : Service() {
 
                 mediaProjection = null
 
+                updateVisionStopped()
+
                 stopSelf()
             }
         }
 
-    // =============================================================
+    // ============================================================
     // CREATE
-    // =============================================================
+    // ============================================================
 
     override fun onCreate() {
 
@@ -177,9 +180,9 @@ class ScreenCaptureService : Service() {
         )
     }
 
-    // =============================================================
+    // ============================================================
     // START COMMAND
-    // =============================================================
+    // ============================================================
 
     override fun onStartCommand(
         intent: Intent?,
@@ -257,9 +260,9 @@ class ScreenCaptureService : Service() {
         return START_NOT_STICKY
     }
 
-    // =============================================================
+    // ============================================================
     // FOREGROUND SERVICE
-    // =============================================================
+    // ============================================================
 
     private fun startCaptureForeground() {
 
@@ -287,9 +290,9 @@ class ScreenCaptureService : Service() {
         }
     }
 
-    // =============================================================
+    // ============================================================
     // START PROJECTION
-    // =============================================================
+    // ============================================================
 
     private fun startProjection(
         resultCode: Int,
@@ -354,6 +357,21 @@ class ScreenCaptureService : Service() {
         val density =
             metrics.densityDpi
 
+        if (
+            width <= 0 ||
+            height <= 0
+        ) {
+
+            Log.e(
+                TAG,
+                "Invalid display dimensions"
+            )
+
+            stopSelf()
+
+            return
+        }
+
         val observationWidth =
             width.coerceAtMost(1280)
 
@@ -362,8 +380,11 @@ class ScreenCaptureService : Service() {
                     width.toFloat()
 
         val observationHeight =
-            (height * scale)
+            (
+                height * scale
+                )
                 .toInt()
+                .coerceAtLeast(1)
 
         imageReader =
             ImageReader.newInstance(
@@ -399,6 +420,17 @@ class ScreenCaptureService : Service() {
 
         capturing = true
 
+        getSharedPreferences(
+            "vision_status",
+            MODE_PRIVATE
+        )
+            .edit()
+            .putBoolean(
+                "available",
+                true
+            )
+            .apply()
+
         Log.d(
             TAG,
             "Screen observation started: " +
@@ -407,9 +439,9 @@ class ScreenCaptureService : Service() {
         )
     }
 
-    // =============================================================
+    // ============================================================
     // FRAME PROCESSING
-    // =============================================================
+    // ============================================================
 
     private fun processLatestFrame(
         reader: ImageReader
@@ -420,7 +452,12 @@ class ScreenCaptureService : Service() {
 
         /*
          * Approximately 4 FPS.
+         *
+         * This keeps CPU usage reasonable
+         * while still giving the AI frequent
+         * board updates.
          */
+
         if (
             now - lastFrameTime <
             250L
@@ -482,9 +519,9 @@ class ScreenCaptureService : Service() {
         }
     }
 
-    // =============================================================
-    // IMAGE TO BITMAP
-    // =============================================================
+    // ============================================================
+    // IMAGE → BITMAP
+    // ============================================================
 
     private fun imageToBitmap(
         image: Image
@@ -573,16 +610,18 @@ class ScreenCaptureService : Service() {
         return resultBitmap
     }
 
-    // =============================================================
-    // VISION
-    // =============================================================
+    // ============================================================
+    // VISION + AI
+    // ============================================================
 
     private fun analyzeFrame(
         bitmap: Bitmap
     ) {
 
         /*
-         * READ-ONLY STAGE.
+         * IMPORTANT:
+         *
+         * This stage is READ-ONLY.
          *
          * No tap.
          * No swipe.
@@ -590,61 +629,205 @@ class ScreenCaptureService : Service() {
          * No automatic gameplay.
          */
 
-        val state =
-            BlockBlitzVision.analyze(
-                bitmap
-            )
+        try {
 
-        val occupied =
-            state.board
-                ?.occupiedCount()
-                ?: -1
+            // ----------------------------------------------------
+            // VISION
+            // ----------------------------------------------------
 
-        val detectedPieces =
-            state.pieces.count {
-                it.detected
+            val state =
+                BlockBlitzVision.analyze(
+                    bitmap
+                )
+
+            val board =
+                state.board
+
+            val occupied =
+                board
+                    ?.occupiedCount()
+                    ?: -1
+
+            val detectedPieces =
+                state.pieces.count {
+                    it.detected &&
+                            it.cells.isNotEmpty()
+                }
+
+            val confidence =
+                (
+                    state.confidence *
+                            100f
+                    )
+                    .toInt()
+                    .coerceIn(
+                        0,
+                        100
+                    )
+
+            // ----------------------------------------------------
+            // AI
+            // ----------------------------------------------------
+
+            val bestMove =
+                if (
+                    board != null &&
+                    detectedPieces > 0
+                ) {
+
+                    BlockBlitzAi
+                        .findBestMove(
+                            state
+                        )
+
+                } else {
+
+                    null
+                }
+
+            // ----------------------------------------------------
+            // SAVE STATUS
+            // ----------------------------------------------------
+
+            val preferences =
+                getSharedPreferences(
+                    "vision_status",
+                    MODE_PRIVATE
+                )
+
+            val editor =
+                preferences.edit()
+
+            editor
+                .putBoolean(
+                    "available",
+                    true
+                )
+                .putInt(
+                    "occupied_cells",
+                    occupied
+                )
+                .putInt(
+                    "pieces_detected",
+                    detectedPieces
+                )
+                .putInt(
+                    "confidence",
+                    confidence
+                )
+
+            // ----------------------------------------------------
+            // PIECE INFORMATION
+            // ----------------------------------------------------
+
+            for (piece in state.pieces) {
+
+                val cellsText =
+                    piece.cells.joinToString(
+                        separator = ";"
+                    ) {
+                        "${it.first},${it.second}"
+                    }
+
+                editor.putString(
+                    "piece_${piece.index}_cells",
+                    cellsText
+                )
+
+                editor.putBoolean(
+                    "piece_${piece.index}_detected",
+                    piece.detected
+                )
             }
 
-        val confidence =
-            (
-                state.confidence * 100f
-            ).toInt()
+            // ----------------------------------------------------
+            // BEST MOVE
+            // ----------------------------------------------------
 
-        getSharedPreferences(
-            "vision_status",
-            MODE_PRIVATE
-        )
-            .edit()
-            .putBoolean(
-                "available",
-                true
-            )
-            .putInt(
-                "occupied_cells",
-                occupied
-            )
-            .putInt(
-                "pieces_detected",
-                detectedPieces
-            )
-            .putInt(
-                "confidence",
-                confidence
-            )
-            .apply()
+            if (bestMove != null) {
 
-        Log.d(
-            TAG,
-            "BLOCK BLITZ VISION -> " +
-                    "occupiedCells=$occupied " +
-                    "pieces=$detectedPieces " +
-                    "confidence=$confidence%"
-        )
+                editor
+                    .putBoolean(
+                        "best_move_available",
+                        true
+                    )
+                    .putInt(
+                        "best_move_piece",
+                        bestMove.pieceIndex
+                    )
+                    .putInt(
+                        "best_move_row",
+                        bestMove.row
+                    )
+                    .putInt(
+                        "best_move_column",
+                        bestMove.column
+                    )
+                    .putFloat(
+                        "best_move_score",
+                        bestMove.score.toFloat()
+                    )
+                    .putString(
+                        "best_move_reason",
+                        bestMove.reason
+                    )
+
+                Log.d(
+                    TAG,
+                    "BLOCK BLITZ AI -> " +
+                            "piece=${bestMove.pieceIndex} " +
+                            "row=${bestMove.row} " +
+                            "column=${bestMove.column} " +
+                            "score=${bestMove.score} " +
+                            "reason=${bestMove.reason}"
+                )
+
+            } else {
+
+                editor
+                    .putBoolean(
+                        "best_move_available",
+                        false
+                    )
+                    .remove(
+                        "best_move_reason"
+                    )
+
+                Log.d(
+                    TAG,
+                    "BLOCK BLITZ AI -> " +
+                            "No legal move"
+                )
+            }
+
+            editor.apply()
+
+            // ----------------------------------------------------
+            // FINAL LOG
+            // ----------------------------------------------------
+
+            Log.d(
+                TAG,
+                "BLOCK BLITZ VISION -> " +
+                        "occupiedCells=$occupied " +
+                        "pieces=$detectedPieces " +
+                        "confidence=$confidence% " +
+                        "bestMove=${bestMove != null}"
+            )
+
+        } catch (e: Exception) {
+
+            Log.e(
+                TAG,
+                "Vision/AI analysis failed",
+                e
+            )
+        }
     }
 
-    // =============================================================
+    // ============================================================
     // NOTIFICATION
-    // =============================================================
+    // ============================================================
 
     private fun createNotification():
             Notification {
@@ -700,9 +883,9 @@ class ScreenCaptureService : Service() {
         )
     }
 
-    // =============================================================
+    // ============================================================
     // STOP PROJECTION
-    // =============================================================
+    // ============================================================
 
     private fun stopProjection() {
 
@@ -743,6 +926,15 @@ class ScreenCaptureService : Service() {
 
         mediaProjection = null
 
+        updateVisionStopped()
+    }
+
+    // ============================================================
+    // VISION STOPPED STATUS
+    // ============================================================
+
+    private fun updateVisionStopped() {
+
         getSharedPreferences(
             "vision_status",
             MODE_PRIVATE
@@ -752,12 +944,16 @@ class ScreenCaptureService : Service() {
                 "available",
                 false
             )
+            .putBoolean(
+                "best_move_available",
+                false
+            )
             .apply()
     }
 
-    // =============================================================
+    // ============================================================
     // DESTROY
-    // =============================================================
+    // ============================================================
 
     override fun onDestroy() {
 
@@ -779,6 +975,10 @@ class ScreenCaptureService : Service() {
 
         super.onDestroy()
     }
+
+    // ============================================================
+    // BIND
+    // ============================================================
 
     override fun onBind(
         intent: Intent?
