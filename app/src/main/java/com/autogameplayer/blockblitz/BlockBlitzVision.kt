@@ -3,10 +3,6 @@ package com.autogameplayer.blockblitz
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.util.Log
-import kotlin.math.abs
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.roundToInt
 
 data class BlockBlitzBoard(
     val rows: Int,
@@ -16,6 +12,12 @@ data class BlockBlitzBoard(
     fun occupiedCount(): Int {
         return occupied.sumOf { row ->
             row.count { it }
+        }
+    }
+
+    fun copyBoard(): Array<BooleanArray> {
+        return Array(rows) { r ->
+            occupied[r].clone()
         }
     }
 }
@@ -36,30 +38,36 @@ object BlockBlitzVision {
 
     private const val TAG = "BlockBlitzVision"
 
-    private const val ROWS = 8
-    private const val COLUMNS = 8
+    private const val BOARD_ROWS = 8
+    private const val BOARD_COLUMNS = 8
 
-    // ------------------------------------------------------------
-    // CALIBRATED BOARD
-    // ------------------------------------------------------------
+    /*
+     * Block Blitz board.
+     *
+     * These are normalized coordinates.
+     * They are intentionally slightly wider/taller
+     * than the old values.
+     */
+    private const val BOARD_LEFT = 0.12f
+    private const val BOARD_TOP = 0.19f
+    private const val BOARD_RIGHT = 0.88f
+    private const val BOARD_BOTTOM = 0.67f
 
-    private const val BOARD_LEFT = 0.142f
-    private const val BOARD_TOP = 0.203f
-    private const val BOARD_RIGHT = 0.871f
-    private const val BOARD_BOTTOM = 0.657f
+    /*
+     * Piece tray.
+     */
+    private const val PIECE_TOP = 0.78f
+    private const val PIECE_BOTTOM = 0.93f
 
-    // ------------------------------------------------------------
-    // PIECE TRAY
-    // ------------------------------------------------------------
-
-    private const val PIECE_TOP = 0.765f
-    private const val PIECE_BOTTOM = 0.925f
-
-    private val PIECE_CENTERS = floatArrayOf(
-        0.237f,
-        0.500f,
-        0.762f
-    )
+    /*
+     * Three piece slots.
+     */
+    private val PIECE_SLOT_X =
+        floatArrayOf(
+            0.28f,
+            0.50f,
+            0.72f
+        )
 
     // ============================================================
     // MAIN
@@ -72,20 +80,8 @@ object BlockBlitzVision {
         val board =
             detectBoard(bitmap)
 
-        val boardCellSize =
-            if (board != null) {
-                calculateBoardCellSize(
-                    bitmap
-                )
-            } else {
-                0f
-            }
-
         val pieces =
-            detectPieces(
-                bitmap,
-                boardCellSize
-            )
+            detectPieces(bitmap)
 
         val confidence =
             calculateConfidence(
@@ -95,7 +91,8 @@ object BlockBlitzVision {
 
         Log.d(
             TAG,
-            "VISION RESULT -> " +
+            "Vision -> " +
+                    "board=${board != null}, " +
                     "occupied=${board?.occupiedCount() ?: -1}, " +
                     "pieces=${pieces.count { it.detected }}, " +
                     "confidence=$confidence"
@@ -139,35 +136,41 @@ object BlockBlitzVision {
             (bitmap.height * BOARD_BOTTOM)
                 .toInt()
 
-        if (
-            right <= left ||
-            bottom <= top
-        ) {
-            return null
-        }
-
         val boardWidth =
             right - left
 
         val boardHeight =
             bottom - top
 
+        if (
+            boardWidth <= 0 ||
+            boardHeight <= 0
+        ) {
+            return null
+        }
+
         val cellWidth =
             boardWidth.toFloat() /
-                    COLUMNS
+                    BOARD_COLUMNS
 
         val cellHeight =
             boardHeight.toFloat() /
-                    ROWS
+                    BOARD_ROWS
 
         val occupied =
-            Array(ROWS) {
-                BooleanArray(COLUMNS)
+            Array(
+                BOARD_ROWS
+            ) {
+                BooleanArray(
+                    BOARD_COLUMNS
+                )
             }
 
-        for (row in 0 until ROWS) {
+        var validSamples = 0
 
-            for (column in 0 until COLUMNS) {
+        for (row in 0 until BOARD_ROWS) {
+
+            for (column in 0 until BOARD_COLUMNS) {
 
                 val centerX =
                     (
@@ -183,29 +186,48 @@ object BlockBlitzVision {
                                 cellHeight
                         ).toInt()
 
+                if (
+                    centerX < 0 ||
+                    centerY < 0 ||
+                    centerX >= bitmap.width ||
+                    centerY >= bitmap.height
+                ) {
+                    continue
+                }
+
+                /*
+                 * Instead of a single pixel, sample
+                 * several pixels around the cell center.
+                 */
                 occupied[row][column] =
-                    detectBoardCell(
+                    cellLooksOccupied(
                         bitmap,
                         centerX,
                         centerY,
                         cellWidth,
                         cellHeight
                     )
+
+                validSamples++
             }
         }
 
+        if (validSamples == 0) {
+            return null
+        }
+
         return BlockBlitzBoard(
-            rows = ROWS,
-            columns = COLUMNS,
+            rows = BOARD_ROWS,
+            columns = BOARD_COLUMNS,
             occupied = occupied
         )
     }
 
     // ============================================================
-    // BOARD CELL
+    // CELL OCCUPANCY
     // ============================================================
 
-    private fun detectBoardCell(
+    private fun cellLooksOccupied(
         bitmap: Bitmap,
         centerX: Int,
         centerY: Int,
@@ -214,89 +236,378 @@ object BlockBlitzVision {
     ): Boolean {
 
         val radiusX =
-            max(
-                5,
-                (cellWidth * 0.25f)
-                    .toInt()
-            )
+            (cellWidth * 0.22f)
+                .toInt()
+                .coerceAtLeast(2)
 
         val radiusY =
-            max(
-                5,
-                (cellHeight * 0.25f)
-                    .toInt()
-            )
+            (cellHeight * 0.22f)
+                .toInt()
+                .coerceAtLeast(2)
 
         var colored = 0
         var samples = 0
 
-        val left =
-            max(
-                0,
+        val stepX =
+            radiusX.coerceAtLeast(2)
+
+        val stepY =
+            radiusY.coerceAtLeast(2)
+
+        var y =
+            centerY - radiusY
+
+        while (
+            y <= centerY + radiusY
+        ) {
+
+            var x =
                 centerX - radiusX
-            )
 
-        val right =
-            min(
-                bitmap.width - 1,
-                centerX + radiusX
-            )
-
-        val top =
-            max(
-                0,
-                centerY - radiusY
-            )
-
-        val bottom =
-            min(
-                bitmap.height - 1,
-                centerY + radiusY
-            )
-
-        var y = top
-
-        while (y <= bottom) {
-
-            var x = left
-
-            while (x <= right) {
+            while (
+                x <= centerX + radiusX
+            ) {
 
                 if (
-                    isBlockPixel(
+                    x >= 0 &&
+                    y >= 0 &&
+                    x < bitmap.width &&
+                    y < bitmap.height
+                ) {
+
+                    val pixel =
                         bitmap.getPixel(
                             x,
                             y
                         )
-                    )
-                ) {
-                    colored++
+
+                    samples++
+
+                    if (
+                        isBlockColor(pixel)
+                    ) {
+                        colored++
+                    }
                 }
 
-                samples++
-
-                x += 2
+                x += stepX
             }
 
-            y += 2
+            y += stepY
         }
 
         if (samples == 0) {
             return false
         }
 
-        val ratio =
-            colored.toFloat() /
-                    samples.toFloat()
-
-        return ratio >= 0.18f
+        return colored.toFloat() /
+                samples.toFloat() >
+                0.20f
     }
 
     // ============================================================
-    // BLOCK PIXEL
+    // PIECES
     // ============================================================
 
-    private fun isBlockPixel(
+    private fun detectPieces(
+        bitmap: Bitmap
+    ): List<BlockBlitzPiece> {
+
+        val result =
+            mutableListOf<BlockBlitzPiece>()
+
+        for (index in 0 until 3) {
+
+            val centerX =
+                (
+                    bitmap.width *
+                            PIECE_SLOT_X[index]
+                    ).toInt()
+
+            val cells =
+                detectPieceCells(
+                    bitmap,
+                    centerX
+                )
+
+            val detected =
+                cells.isNotEmpty()
+
+            result.add(
+                BlockBlitzPiece(
+                    index = index,
+                    cells = cells,
+                    detected = detected
+                )
+            )
+
+            Log.d(
+                TAG,
+                "Piece $index -> $cells"
+            )
+        }
+
+        return result
+    }
+
+    // ============================================================
+    // PIECE CELL DETECTION
+    // ============================================================
+
+    private fun detectPieceCells(
+        bitmap: Bitmap,
+        centerX: Int
+    ): List<Pair<Int, Int>> {
+
+        val trayTop =
+            (
+                bitmap.height *
+                        PIECE_TOP
+                ).toInt()
+
+        val trayBottom =
+            (
+                bitmap.height *
+                        PIECE_BOTTOM
+                ).toInt()
+
+        val trayHeight =
+            trayBottom - trayTop
+
+        if (trayHeight <= 0) {
+            return emptyList()
+        }
+
+        /*
+         * Block Blitz pieces are normally
+         * represented using small square blocks.
+         *
+         * Search a 5 x 5 normalized area
+         * around each slot.
+         */
+        val searchWidth =
+            (
+                bitmap.width * 0.19f
+                ).toInt()
+
+        val searchLeft =
+            (
+                centerX -
+                        searchWidth / 2
+                ).coerceAtLeast(0)
+
+        val searchRight =
+            (
+                centerX +
+                        searchWidth / 2
+                ).coerceAtMost(
+                    bitmap.width - 1
+                )
+
+        /*
+         * Estimate block size from the tray.
+         */
+        val blockSize =
+            (
+                bitmap.width * 0.035f
+                ).toInt()
+                .coerceIn(
+                    12,
+                    80
+                )
+
+        /*
+         * Build candidate centers.
+         */
+        val rawCells =
+            mutableListOf<Pair<Int, Int>>()
+
+        /*
+         * We inspect a 5x5 area.
+         *
+         * Each candidate represents a possible
+         * block location.
+         */
+        val columns = 5
+        val rows = 5
+
+        val usableWidth =
+            searchRight -
+                    searchLeft
+
+        val cellSize =
+            (
+                usableWidth.toFloat() /
+                        columns
+                ).coerceAtLeast(
+                    blockSize.toFloat()
+                )
+
+        /*
+         * Find colored clusters by sampling.
+         */
+        for (row in 0 until rows) {
+
+            for (column in 0 until columns) {
+
+                val x =
+                    (
+                        searchLeft +
+                                (column + 0.5f) *
+                                cellSize
+                        ).toInt()
+
+                val y =
+                    (
+                        trayTop +
+                                trayHeight *
+                                (
+                                    row + 0.5f
+                                ) /
+                                rows
+                        ).toInt()
+
+                if (
+                    x < 0 ||
+                    y < 0 ||
+                    x >= bitmap.width ||
+                    y >= bitmap.height
+                ) {
+                    continue
+                }
+
+                if (
+                    regionHasBlockColor(
+                        bitmap,
+                        x,
+                        y,
+                        cellSize * 0.38f
+                    )
+                ) {
+
+                    rawCells.add(
+                        Pair(
+                            row,
+                            column
+                        )
+                    )
+                }
+            }
+        }
+
+        if (rawCells.isEmpty()) {
+            return emptyList()
+        }
+
+        /*
+         * Normalize the piece so that the top-left
+         * occupied cell becomes 0,0.
+         */
+        val minRow =
+            rawCells.minOf {
+                it.first
+            }
+
+        val minColumn =
+            rawCells.minOf {
+                it.second
+            }
+
+        return rawCells
+            .map {
+                Pair(
+                    it.first - minRow,
+                    it.second - minColumn
+                )
+            }
+            .distinct()
+            .sortedWith(
+                compareBy<Pair<Int, Int>>(
+                    { it.first },
+                    { it.second }
+                )
+            )
+    }
+
+    // ============================================================
+    // REGION COLOR
+    // ============================================================
+
+    private fun regionHasBlockColor(
+        bitmap: Bitmap,
+        centerX: Int,
+        centerY: Int,
+        radius: Float
+    ): Boolean {
+
+        val r =
+            radius
+                .toInt()
+                .coerceAtLeast(3)
+
+        var good = 0
+        var total = 0
+
+        val step =
+            (r / 3)
+                .coerceAtLeast(2)
+
+        var y =
+            centerY - r
+
+        while (
+            y <= centerY + r
+        ) {
+
+            var x =
+                centerX - r
+
+            while (
+                x <= centerX + r
+            ) {
+
+                if (
+                    x >= 0 &&
+                    y >= 0 &&
+                    x < bitmap.width &&
+                    y < bitmap.height
+                ) {
+
+                    val pixel =
+                        bitmap.getPixel(
+                            x,
+                            y
+                        )
+
+                    total++
+
+                    if (
+                        isBlockColor(pixel)
+                    ) {
+                        good++
+                    }
+                }
+
+                x += step
+            }
+
+            y += step
+        }
+
+        if (total == 0) {
+            return false
+        }
+
+        return good.toFloat() /
+                total.toFloat() >
+                0.25f
+    }
+
+    // ============================================================
+    // COLOR CLASSIFICATION
+    // ============================================================
+
+    private fun isBlockColor(
         pixel: Int
     ): Boolean {
 
@@ -333,525 +644,13 @@ object BlockBlitzVision {
                         blue
                 ) / 3
 
-        return (
-            brightness >= 75 &&
-                    saturation >= 30
-            )
-    }
-
-    // ============================================================
-    // BOARD CELL SIZE
-    // ============================================================
-
-    private fun calculateBoardCellSize(
-        bitmap: Bitmap
-    ): Float {
-
-        val boardWidth =
-            bitmap.width *
-                    (
-                        BOARD_RIGHT -
-                                BOARD_LEFT
-                        )
-
-        return boardWidth /
-                COLUMNS.toFloat()
-    }
-
-    // ============================================================
-    // PIECES
-    // ============================================================
-
-    private fun detectPieces(
-        bitmap: Bitmap,
-        boardCellSize: Float
-    ): List<BlockBlitzPiece> {
-
-        val result =
-            mutableListOf<BlockBlitzPiece>()
-
         /*
-         * The piece blocks in the supplied
-         * screenshot are substantially smaller
-         * than board cells.
-         *
-         * Approximate piece block size:
-         * 0.40 × board cell size.
+         * Empty Block Blitz board is dark blue.
+         * Pieces are significantly brighter
+         * and more saturated.
          */
-
-        val pieceCellSize =
-            (
-                boardCellSize * 0.40f
-                )
-                .coerceAtLeast(8f)
-
-        for (index in 0..2) {
-
-            val centerX =
-                (
-                    bitmap.width *
-                            PIECE_CENTERS[index]
-                    )
-                    .toInt()
-
-            val top =
-                (
-                    bitmap.height *
-                            PIECE_TOP
-                    )
-                    .toInt()
-
-            val bottom =
-                (
-                    bitmap.height *
-                            PIECE_BOTTOM
-                    )
-                    .toInt()
-
-            val cells =
-                extractPieceShape(
-                    bitmap = bitmap,
-                    centerX = centerX,
-                    top = top,
-                    bottom = bottom,
-                    pieceCellSize = pieceCellSize
-                )
-
-            val detected =
-                cells.isNotEmpty()
-
-            result.add(
-                BlockBlitzPiece(
-                    index = index,
-                    cells = cells,
-                    detected = detected
-                )
-            )
-
-            Log.d(
-                TAG,
-                "PIECE ${index + 1} -> " +
-                        "detected=$detected " +
-                        "cells=$cells"
-            )
-        }
-
-        return result
-    }
-
-    // ============================================================
-    // EXTRACT PIECE
-    // ============================================================
-
-    private fun extractPieceShape(
-        bitmap: Bitmap,
-        centerX: Int,
-        top: Int,
-        bottom: Int,
-        pieceCellSize: Float
-    ): List<Pair<Int, Int>> {
-
-        /*
-         * Each piece has a separate tray slot.
-         */
-
-        val slotHalfWidth =
-            (
-                bitmap.width * 0.105f
-                )
-                .toInt()
-
-        val left =
-            max(
-                0,
-                centerX - slotHalfWidth
-            )
-
-        val right =
-            min(
-                bitmap.width - 1,
-                centerX + slotHalfWidth
-            )
-
-        val safeTop =
-            max(
-                0,
-                top
-            )
-
-        val safeBottom =
-            min(
-                bitmap.height - 1,
-                bottom
-            )
-
-        val bounds =
-            findColoredBounds(
-                bitmap,
-                left,
-                right,
-                safeTop,
-                safeBottom
-            )
-                ?: return emptyList()
-
-        val width =
-            bounds.maxX -
-                    bounds.minX +
-                    1
-
-        val height =
-            bounds.maxY -
-                    bounds.minY +
-                    1
-
-        if (
-            width <= 0 ||
-            height <= 0
-        ) {
-            return emptyList()
-        }
-
-        /*
-         * Estimate number of cells.
-         *
-         * Round rather than truncate so:
-         *
-         * 4 blocks -> 4
-         * 3 blocks -> 3
-         * 2 blocks -> 2
-         */
-
-        val columns =
-            (
-                width /
-                        pieceCellSize
-                )
-                .roundToInt()
-                .coerceIn(
-                    1,
-                    5
-                )
-
-        val rows =
-            (
-                height /
-                        pieceCellSize
-                )
-                .roundToInt()
-                .coerceIn(
-                    1,
-                    5
-                )
-
-        /*
-         * If the estimated size is wildly
-         * inconsistent, reject it.
-         */
-
-        if (
-            columns < 1 ||
-            columns > 5 ||
-            rows < 1 ||
-            rows > 5
-        ) {
-            return emptyList()
-        }
-
-        /*
-         * Reconstruct cells using the
-         * detected bounding-box center.
-         */
-
-        val detectedCells =
-            mutableListOf<Pair<Int, Int>>()
-
-        for (row in 0 until rows) {
-
-            for (column in 0 until columns) {
-
-                val sampleX =
-                    (
-                        bounds.minX +
-                                (
-                                    column + 0.5f
-                                    ) *
-                                pieceCellSize
-                        )
-                        .toInt()
-
-                val sampleY =
-                    (
-                        bounds.minY +
-                                (
-                                    row + 0.5f
-                                    ) *
-                                pieceCellSize
-                        )
-                        .toInt()
-
-                if (
-                    samplePieceCell(
-                        bitmap,
-                        sampleX,
-                        sampleY,
-                        pieceCellSize
-                    )
-                ) {
-
-                    detectedCells.add(
-                        Pair(
-                            row,
-                            column
-                        )
-                    )
-                }
-            }
-        }
-
-        val normalized =
-            normalizeCells(
-                detectedCells
-            )
-
-        /*
-         * A valid piece should have at least
-         * one and at most 25 cells.
-         */
-
-        if (
-            normalized.isEmpty() ||
-            normalized.size > 25
-        ) {
-            return emptyList()
-        }
-
-        return normalized
-    }
-
-    // ============================================================
-    // BOUNDS
-    // ============================================================
-
-    private data class PieceBounds(
-        val minX: Int,
-        val minY: Int,
-        val maxX: Int,
-        val maxY: Int
-    )
-
-    private fun findColoredBounds(
-        bitmap: Bitmap,
-        left: Int,
-        right: Int,
-        top: Int,
-        bottom: Int
-    ): PieceBounds? {
-
-        var minX =
-            right
-
-        var minY =
-            bottom
-
-        var maxX =
-            left
-
-        var maxY =
-            top
-
-        var found =
-            false
-
-        var y =
-            top
-
-        while (y <= bottom) {
-
-            var x =
-                left
-
-            while (x <= right) {
-
-                if (
-                    isBlockPixel(
-                        bitmap.getPixel(
-                            x,
-                            y
-                        )
-                    )
-                ) {
-
-                    found = true
-
-                    minX =
-                        min(
-                            minX,
-                            x
-                        )
-
-                    minY =
-                        min(
-                            minY,
-                            y
-                        )
-
-                    maxX =
-                        max(
-                            maxX,
-                            x
-                        )
-
-                    maxY =
-                        max(
-                            maxY,
-                            y
-                        )
-                }
-
-                x += 2
-            }
-
-            y += 2
-        }
-
-        if (!found) {
-            return null
-        }
-
-        return PieceBounds(
-            minX,
-            minY,
-            maxX,
-            maxY
-        )
-    }
-
-    // ============================================================
-    // PIECE CELL SAMPLE
-    // ============================================================
-
-    private fun samplePieceCell(
-        bitmap: Bitmap,
-        centerX: Int,
-        centerY: Int,
-        cellSize: Float
-    ): Boolean {
-
-        val radius =
-            max(
-                3,
-                (
-                    cellSize * 0.28f
-                    ).toInt()
-            )
-
-        var colored =
-            0
-
-        var samples =
-            0
-
-        val left =
-            max(
-                0,
-                centerX - radius
-            )
-
-        val right =
-            min(
-                bitmap.width - 1,
-                centerX + radius
-            )
-
-        val top =
-            max(
-                0,
-                centerY - radius
-            )
-
-        val bottom =
-            min(
-                bitmap.height - 1,
-                centerY + radius
-            )
-
-        var y =
-            top
-
-        while (y <= bottom) {
-
-            var x =
-                left
-
-            while (x <= right) {
-
-                if (
-                    isBlockPixel(
-                        bitmap.getPixel(
-                            x,
-                            y
-                        )
-                    )
-                ) {
-                    colored++
-                }
-
-                samples++
-
-                x += 2
-            }
-
-            y += 2
-        }
-
-        if (samples == 0) {
-            return false
-        }
-
-        return (
-            colored.toFloat() /
-                    samples.toFloat()
-            ) >= 0.20f
-    }
-
-    // ============================================================
-    // NORMALIZE
-    // ============================================================
-
-    private fun normalizeCells(
-        cells: List<Pair<Int, Int>>
-    ): List<Pair<Int, Int>> {
-
-        if (cells.isEmpty()) {
-            return emptyList()
-        }
-
-        val minRow =
-            cells.minOf {
-                it.first
-            }
-
-        val minColumn =
-            cells.minOf {
-                it.second
-            }
-
-        return cells
-            .map {
-                Pair(
-                    it.first - minRow,
-                    it.second - minColumn
-                )
-            }
-            .distinct()
-            .sortedWith(
-                compareBy<Pair<Int, Int>> {
-                    it.first
-                }.thenBy {
-                    it.second
-                }
-            )
+        return brightness > 75 &&
+                saturation > 35
     }
 
     // ============================================================
@@ -869,23 +668,39 @@ object BlockBlitzVision {
 
         val detectedPieces =
             pieces.count {
-                it.detected &&
-                        it.cells.isNotEmpty()
+                it.detected
             }
 
-        return when {
+        var confidence =
+            0.60f
 
-            detectedPieces == 3 ->
-                1.0f
-
-            detectedPieces == 2 ->
-                0.80f
-
-            detectedPieces == 1 ->
-                0.60f
-
-            else ->
-                0.35f
+        if (
+            board.occupiedCount() >= 0
+        ) {
+            confidence += 0.10f
         }
+
+        if (
+            detectedPieces >= 1
+        ) {
+            confidence += 0.10f
+        }
+
+        if (
+            detectedPieces >= 2
+        ) {
+            confidence += 0.10f
+        }
+
+        if (
+            detectedPieces == 3
+        ) {
+            confidence += 0.10f
+        }
+
+        return confidence.coerceIn(
+            0f,
+            1f
+        )
     }
 }
