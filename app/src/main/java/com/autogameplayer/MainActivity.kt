@@ -1,4 +1,3 @@
-
 package com.autogameplayer
 
 import android.app.Activity
@@ -6,9 +5,12 @@ import android.content.ComponentName
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.LinearLayout
@@ -25,6 +27,7 @@ class MainActivity : Activity() {
     private lateinit var serviceStatus: TextView
     private lateinit var observationStatus: TextView
     private lateinit var selectedGameText: TextView
+    private lateinit var gameSpinner: Spinner
 
     private lateinit var visionGameStatus: TextView
     private lateinit var visionBoardStatus: TextView
@@ -33,8 +36,6 @@ class MainActivity : Activity() {
     private lateinit var visionConfidenceStatus: TextView
     private lateinit var visionActionStatus: TextView
 
-    private lateinit var gameSpinner: Spinner
-
     private val preferences by lazy {
         getSharedPreferences(
             "player_settings",
@@ -42,7 +43,31 @@ class MainActivity : Activity() {
         )
     }
 
+    private val visionPreferences by lazy {
+        getSharedPreferences(
+            "vision_status",
+            MODE_PRIVATE
+        )
+    }
+
     private var apps = emptyList<AppInfo>()
+
+    private val visionHandler =
+        Handler(Looper.getMainLooper())
+
+    private val visionUpdater =
+        object : Runnable {
+
+            override fun run() {
+
+                updateVisionStatus()
+
+                visionHandler.postDelayed(
+                    this,
+                    1000L
+                )
+            }
+        }
 
     override fun onCreate(
         savedInstanceState: Bundle?
@@ -65,89 +90,142 @@ class MainActivity : Activity() {
         updateSelectedGame()
         updateObservationStatus()
         updateVisionStatus()
+
+        visionHandler.removeCallbacks(
+            visionUpdater
+        )
+
+        visionHandler.post(
+            visionUpdater
+        )
     }
+
+    override fun onPause() {
+
+        visionHandler.removeCallbacks(
+            visionUpdater
+        )
+
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+
+        visionHandler.removeCallbacks(
+            visionUpdater
+        )
+
+        super.onDestroy()
+    }
+
+    // =============================================================
+    // USER INTERFACE
+    // =============================================================
 
     private fun createInterface() {
 
-        val scrollView = ScrollView(this)
+        val scrollView =
+            ScrollView(this)
 
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.TOP
+        val content =
+            LinearLayout(this).apply {
 
-            setPadding(
-                32,
-                40,
-                32,
-                40
-            )
-        }
+                orientation =
+                    LinearLayout.VERTICAL
+
+                gravity =
+                    Gravity.TOP
+
+                setPadding(
+                    32,
+                    40,
+                    32,
+                    40
+                )
+            }
 
         // ---------------------------------------------------------
         // HEADER
         // ---------------------------------------------------------
 
-        val title = TextView(this).apply {
-            text = "AUTO GAME PLAYER"
-            textSize = 28f
-            gravity = Gravity.CENTER
+        val title =
+            TextView(this).apply {
 
-            setPadding(
-                0,
-                15,
-                0,
-                10
-            )
-        }
+                text =
+                    "AUTO GAME PLAYER"
 
-        val subtitle = TextView(this).apply {
-            text = "Universal AI Game Player"
-            textSize = 19f
-            gravity = Gravity.CENTER
+                textSize = 28f
 
-            setPadding(
-                0,
-                0,
-                0,
-                25
-            )
-        }
+                gravity =
+                    Gravity.CENTER
 
-        val description = TextView(this).apply {
-            text =
-                "Select any launchable Android game or app. " +
-                "The player will observe the selected screen " +
-                "and later use the AI decision engine."
+                setPadding(
+                    0,
+                    15,
+                    0,
+                    10
+                )
+            }
 
-            textSize = 16f
+        val subtitle =
+            TextView(this).apply {
 
-            setPadding(
-                0,
-                0,
-                0,
-                25
-            )
-        }
+                text =
+                    "Universal AI Game Player"
+
+                textSize = 19f
+
+                gravity =
+                    Gravity.CENTER
+
+                setPadding(
+                    0,
+                    0,
+                    0,
+                    25
+                )
+            }
+
+        val description =
+            TextView(this).apply {
+
+                text =
+                    "Select any launchable Android game or app. " +
+                    "The player will observe the selected screen " +
+                    "and later use the AI decision engine."
+
+                textSize = 16f
+
+                setPadding(
+                    0,
+                    0,
+                    0,
+                    25
+                )
+            }
 
         // ---------------------------------------------------------
         // ACCESSIBILITY
         // ---------------------------------------------------------
 
-        serviceStatus = TextView(this).apply {
-            textSize = 17f
+        serviceStatus =
+            TextView(this).apply {
 
-            setPadding(
-                0,
-                15,
-                0,
-                15
-            )
-        }
+                textSize = 17f
+
+                setPadding(
+                    0,
+                    15,
+                    0,
+                    15
+                )
+            }
 
         val accessibilityButton =
             Button(this).apply {
 
-                text = "ENABLE GAME CONTROL"
+                text =
+                    "ENABLE GAME CONTROL"
 
                 setOnClickListener {
 
@@ -174,7 +252,8 @@ class MainActivity : Activity() {
         val refreshButton =
             Button(this).apply {
 
-                text = "REFRESH APPS & STATUS"
+                text =
+                    "REFRESH APPS & STATUS"
 
                 setOnClickListener {
 
@@ -207,7 +286,8 @@ class MainActivity : Activity() {
                 )
             }
 
-        gameSpinner = Spinner(this)
+        gameSpinner =
+            Spinner(this)
 
         selectedGameText =
             TextView(this).apply {
@@ -252,6 +332,8 @@ class MainActivity : Activity() {
                                 selected.name
                             )
                             .apply()
+
+                        clearVisionStatus()
 
                         updateSelectedGame()
                         updateVisionStatus()
@@ -329,6 +411,8 @@ class MainActivity : Activity() {
                             this@MainActivity
                         )
 
+                    clearVisionStatus()
+
                     updateObservationStatus()
                     updateVisionStatus()
                 }
@@ -358,6 +442,7 @@ class MainActivity : Activity() {
             TextView(this).apply {
 
                 textSize = 16f
+
                 setPadding(
                     0,
                     6,
@@ -370,6 +455,7 @@ class MainActivity : Activity() {
             TextView(this).apply {
 
                 textSize = 16f
+
                 setPadding(
                     0,
                     6,
@@ -382,6 +468,7 @@ class MainActivity : Activity() {
             TextView(this).apply {
 
                 textSize = 16f
+
                 setPadding(
                     0,
                     6,
@@ -394,6 +481,7 @@ class MainActivity : Activity() {
             TextView(this).apply {
 
                 textSize = 16f
+
                 setPadding(
                     0,
                     6,
@@ -406,6 +494,7 @@ class MainActivity : Activity() {
             TextView(this).apply {
 
                 textSize = 16f
+
                 setPadding(
                     0,
                     6,
@@ -506,6 +595,8 @@ Verification
                             this@MainActivity
                         )
 
+                    clearVisionStatus()
+
                     updateObservationStatus()
                     updateVisionStatus()
                 }
@@ -563,38 +654,84 @@ Verification
                 null
             )
 
-        val running =
-            ScreenCaptureService
-                .isCapturing()
+        val available =
+            visionPreferences.getBoolean(
+                "available",
+                false
+            )
+
+        val occupied =
+            visionPreferences.getInt(
+                "occupied_cells",
+                -1
+            )
+
+        val pieces =
+            visionPreferences.getInt(
+                "pieces_detected",
+                -1
+            )
+
+        val confidence =
+            visionPreferences.getInt(
+                "confidence",
+                0
+            )
 
         visionGameStatus.text =
-            "Game: " +
-                    (targetName ?: "None")
+            "Game: ${targetName ?: "None"}"
 
         visionBoardStatus.text =
             "Board: " +
-                    if (running) {
+                    if (available) {
+                        "DETECTED"
+                    } else if (
+                        ScreenCaptureService
+                            .isCapturing()
+                    ) {
                         "ANALYZING"
                     } else {
                         "WAITING"
                     }
 
         visionOccupiedStatus.text =
-            "Occupied Cells: --"
+            "Occupied Cells: " +
+                    if (occupied >= 0) {
+                        occupied.toString()
+                    } else {
+                        "--"
+                    }
 
         visionPiecesStatus.text =
-            "Pieces Detected: -- / 3"
+            "Pieces Detected: " +
+                    if (pieces >= 0) {
+                        "$pieces / 3"
+                    } else {
+                        "-- / 3"
+                    }
 
         visionConfidenceStatus.text =
-            "Confidence: --%"
+            "Confidence: " +
+                    if (available) {
+                        "$confidence%"
+                    } else {
+                        "--%"
+                    }
 
         visionActionStatus.text =
             "Automatic Action: OFF\n" +
                     "Mode: Observation Only"
     }
 
+    private fun clearVisionStatus() {
+
+        visionPreferences.edit()
+            .clear()
+            .apply()
+    }
+
     // =============================================================
-    // LOAD ALL LAUNCHABLE APPS
+    // LOAD APPS
     // =============================================================
 
     private fun loadLaunchableApps() {
@@ -615,58 +752,59 @@ Verification
                 0
             )
 
-        apps = activities
-            .mapNotNull { resolveInfo ->
+        apps =
+            activities
+                .mapNotNull { resolveInfo ->
 
-                val activityInfo =
-                    resolveInfo.activityInfo
-                        ?: return@mapNotNull null
+                    val activityInfo =
+                        resolveInfo.activityInfo
+                            ?: return@mapNotNull null
 
-                val appPackage =
-                    activityInfo.packageName
+                    val appPackage =
+                        activityInfo.packageName
 
-                if (
-                    appPackage ==
-                    packageNameOfThisApp()
-                ) {
-                    return@mapNotNull null
+                    if (
+                        appPackage ==
+                        packageNameOfThisApp()
+                    ) {
+                        return@mapNotNull null
+                    }
+
+                    val applicationInfo =
+                        activityInfo.applicationInfo
+                            ?: return@mapNotNull null
+
+                    val label =
+                        applicationInfo
+                            .loadLabel(
+                                packageManager
+                            )
+                            ?.toString()
+                            ?.trim()
+
+                    if (
+                        label.isNullOrEmpty()
+                    ) {
+                        return@mapNotNull null
+                    }
+
+                    AppInfo(
+                        name = label,
+                        packageName = appPackage
+                    )
                 }
-
-                val applicationInfo =
-                    activityInfo.applicationInfo
-                        ?: return@mapNotNull null
-
-                val label =
-                    applicationInfo
-                        .loadLabel(
-                            packageManager
-                        )
-                        ?.toString()
-                        ?.trim()
-
-                if (
-                    label.isNullOrEmpty()
-                ) {
-                    return@mapNotNull null
+                .distinctBy {
+                    it.packageName
                 }
-
-                AppInfo(
-                    name = label,
-                    packageName = appPackage
-                )
-            }
-            .distinctBy {
-                it.packageName
-            }
-            .sortedBy {
-                it.name.lowercase()
-            }
+                .sortedBy {
+                    it.name.lowercase()
+                }
 
         updateSpinner()
     }
 
     // =============================================================
-    // UPDATE SPINNER
+    // SPINNER
     // =============================================================
 
     private fun updateSpinner() {
@@ -727,59 +865,56 @@ Verification
             }
         }
 
-        gameSpinner
-            .setOnItemSelectedListener(
-                object :
-                    android.widget
-                        .AdapterView
-                        .OnItemSelectedListener {
+        gameSpinner.onItemSelectedListener =
+            object :
+                AdapterView
+                    .OnItemSelectedListener {
 
-                    override fun onItemSelected(
-                        parent:
-                            android.widget.AdapterView<*>?,
-                        view: View?,
-                        position: Int,
-                        id: Long
+                override fun onItemSelected(
+                    parent:
+                        AdapterView<*>?,
+                    view: View?,
+                    position: Int,
+                    id: Long
+                ) {
+
+                    if (
+                        position >= 0 &&
+                        position < apps.size
                     ) {
 
-                        if (
-                            position >= 0 &&
-                            position < apps.size
-                        ) {
+                        val selected =
+                            apps[position]
 
-                            val selected =
-                                apps[position]
-
-                            selectedGameText.text =
-                                "Selected Game / App:\n" +
-                                        "${selected.name}\n" +
-                                        selected.packageName
-                        }
-                    }
-
-                    override fun onNothingSelected(
-                        parent:
-                            android.widget.AdapterView<*>?
-                    ) {
+                        selectedGameText.text =
+                            "Selected Game / App:\n" +
+                                    "${selected.name}\n" +
+                                    selected.packageName
                     }
                 }
-            )
+
+                override fun onNothingSelected(
+                    parent:
+                        AdapterView<*>?
+                ) {
+                }
+            }
     }
 
     // =============================================================
-    // OPEN SELECTED APP
+    // OPEN APP
     // =============================================================
 
     private fun openSelectedApp() {
 
-        val packageName =
+        val targetPackage =
             preferences.getString(
                 "target_package",
                 null
             )
 
         if (
-            packageName.isNullOrEmpty()
+            targetPackage.isNullOrEmpty()
         ) {
 
             selectedGameText.text =
@@ -793,7 +928,7 @@ Verification
             val launchIntent =
                 packageManager
                     .getLaunchIntentForPackage(
-                        packageName
+                        targetPackage
                     )
 
             if (
@@ -842,6 +977,8 @@ Verification
 
             return
         }
+
+        clearVisionStatus()
 
         val projectionManager =
             getSystemService(
@@ -904,7 +1041,7 @@ Verification
     }
 
     // =============================================================
-    // ACCESSIBILITY STATUS
+    // ACCESSIBILITY
     // =============================================================
 
     private fun updateServiceStatus() {
@@ -965,7 +1102,7 @@ Verification
                 null
             )
 
-        val packageName =
+        val targetPackage =
             preferences.getString(
                 "target_package",
                 null
@@ -974,12 +1111,12 @@ Verification
         selectedGameText.text =
             if (
                 name != null &&
-                packageName != null
+                targetPackage != null
             ) {
 
                 "Selected Game / App:\n" +
                         "$name\n" +
-                        packageName
+                        targetPackage
 
             } else {
 
