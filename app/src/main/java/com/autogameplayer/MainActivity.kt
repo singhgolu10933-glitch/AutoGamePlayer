@@ -1,3 +1,4 @@
+
 package com.autogameplayer
 
 import android.app.Activity
@@ -8,7 +9,6 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
-import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.LinearLayout
@@ -25,6 +25,14 @@ class MainActivity : Activity() {
     private lateinit var serviceStatus: TextView
     private lateinit var observationStatus: TextView
     private lateinit var selectedGameText: TextView
+
+    private lateinit var visionGameStatus: TextView
+    private lateinit var visionBoardStatus: TextView
+    private lateinit var visionOccupiedStatus: TextView
+    private lateinit var visionPiecesStatus: TextView
+    private lateinit var visionConfidenceStatus: TextView
+    private lateinit var visionActionStatus: TextView
+
     private lateinit var gameSpinner: Spinner
 
     private val preferences by lazy {
@@ -36,14 +44,18 @@ class MainActivity : Activity() {
 
     private var apps = emptyList<AppInfo>()
 
-    override fun onCreate(savedInstanceState: Bundle?) {
+    override fun onCreate(
+        savedInstanceState: Bundle?
+    ) {
         super.onCreate(savedInstanceState)
 
         createInterface()
+
         loadLaunchableApps()
         updateServiceStatus()
         updateSelectedGame()
         updateObservationStatus()
+        updateVisionStatus()
     }
 
     override fun onResume() {
@@ -52,6 +64,7 @@ class MainActivity : Activity() {
         updateServiceStatus()
         updateSelectedGame()
         updateObservationStatus()
+        updateVisionStatus()
     }
 
     private fun createInterface() {
@@ -61,6 +74,7 @@ class MainActivity : Activity() {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.TOP
+
             setPadding(
                 32,
                 40,
@@ -77,6 +91,7 @@ class MainActivity : Activity() {
             text = "AUTO GAME PLAYER"
             textSize = 28f
             gravity = Gravity.CENTER
+
             setPadding(
                 0,
                 15,
@@ -89,6 +104,7 @@ class MainActivity : Activity() {
             text = "Universal AI Game Player"
             textSize = 19f
             gravity = Gravity.CENTER
+
             setPadding(
                 0,
                 0,
@@ -102,7 +118,9 @@ class MainActivity : Activity() {
                 "Select any launchable Android game or app. " +
                 "The player will observe the selected screen " +
                 "and later use the AI decision engine."
+
             textSize = 16f
+
             setPadding(
                 0,
                 0,
@@ -117,6 +135,7 @@ class MainActivity : Activity() {
 
         serviceStatus = TextView(this).apply {
             textSize = 17f
+
             setPadding(
                 0,
                 15,
@@ -125,199 +144,315 @@ class MainActivity : Activity() {
             )
         }
 
-        val accessibilityButton = Button(this).apply {
+        val accessibilityButton =
+            Button(this).apply {
 
-            text = "ENABLE GAME CONTROL"
+                text = "ENABLE GAME CONTROL"
 
-            setOnClickListener {
+                setOnClickListener {
 
-                try {
+                    try {
 
-                    startActivity(
-                        Intent(
-                            Settings.ACTION_ACCESSIBILITY_SETTINGS
+                        startActivity(
+                            Intent(
+                                Settings
+                                    .ACTION_ACCESSIBILITY_SETTINGS
+                            )
                         )
-                    )
 
-                } catch (_: Exception) {
+                    } catch (_: Exception) {
 
-                    startActivity(
-                        Intent(
-                            Settings.ACTION_SETTINGS
+                        startActivity(
+                            Intent(
+                                Settings.ACTION_SETTINGS
+                            )
                         )
-                    )
+                    }
                 }
             }
-        }
 
-        val refreshButton = Button(this).apply {
+        val refreshButton =
+            Button(this).apply {
 
-            text = "REFRESH APPS & STATUS"
+                text = "REFRESH APPS & STATUS"
 
-            setOnClickListener {
+                setOnClickListener {
 
-                loadLaunchableApps()
+                    loadLaunchableApps()
 
-                updateServiceStatus()
-
-                updateSelectedGame()
-
-                updateObservationStatus()
+                    updateServiceStatus()
+                    updateSelectedGame()
+                    updateObservationStatus()
+                    updateVisionStatus()
+                }
             }
-        }
 
         // ---------------------------------------------------------
-        // TARGET APP / GAME
+        // TARGET GAME
         // ---------------------------------------------------------
 
-        val gameTitle = TextView(this).apply {
+        val gameTitle =
+            TextView(this).apply {
 
-            text = "SELECT TARGET GAME / APP"
+                text =
+                    "SELECT TARGET GAME / APP"
 
-            textSize = 20f
+                textSize = 20f
 
-            setPadding(
-                0,
-                30,
-                0,
-                10
-            )
-        }
+                setPadding(
+                    0,
+                    30,
+                    0,
+                    10
+                )
+            }
 
         gameSpinner = Spinner(this)
 
-        selectedGameText = TextView(this).apply {
+        selectedGameText =
+            TextView(this).apply {
 
-            textSize = 15f
+                textSize = 15f
 
-            setPadding(
-                0,
-                15,
-                0,
-                15
-            )
-        }
+                setPadding(
+                    0,
+                    15,
+                    0,
+                    15
+                )
+            }
 
-        val saveGameButton = Button(this).apply {
+        val saveGameButton =
+            Button(this).apply {
 
-            text = "SAVE SELECTED GAME"
+                text =
+                    "SAVE SELECTED GAME"
 
-            setOnClickListener {
+                setOnClickListener {
 
-                val position =
-                    gameSpinner.selectedItemPosition
+                    val position =
+                        gameSpinner
+                            .selectedItemPosition
 
-                if (
-                    position >= 0 &&
-                    position < apps.size
-                ) {
+                    if (
+                        position >= 0 &&
+                        position < apps.size
+                    ) {
 
-                    val selected =
-                        apps[position]
+                        val selected =
+                            apps[position]
 
-                    preferences.edit()
-                        .putString(
-                            "target_package",
-                            selected.packageName
-                        )
-                        .putString(
-                            "target_name",
-                            selected.name
-                        )
-                        .apply()
+                        preferences.edit()
+                            .putString(
+                                "target_package",
+                                selected.packageName
+                            )
+                            .putString(
+                                "target_name",
+                                selected.name
+                            )
+                            .apply()
 
-                    updateSelectedGame()
+                        updateSelectedGame()
+                        updateVisionStatus()
+                    }
                 }
             }
-        }
 
-        val launchGameButton = Button(this).apply {
+        val launchGameButton =
+            Button(this).apply {
 
-            text = "OPEN SELECTED GAME"
+                text =
+                    "OPEN SELECTED GAME"
 
-            setOnClickListener {
+                setOnClickListener {
 
-                openSelectedApp()
+                    openSelectedApp()
+                }
             }
-        }
 
         // ---------------------------------------------------------
         // SCREEN OBSERVATION
         // ---------------------------------------------------------
 
-        val observationTitle = TextView(this).apply {
+        val observationTitle =
+            TextView(this).apply {
 
-            text = "SCREEN OBSERVATION"
+                text =
+                    "SCREEN OBSERVATION"
 
-            textSize = 20f
+                textSize = 20f
 
-            setPadding(
-                0,
-                30,
-                0,
-                10
-            )
-        }
-
-        observationStatus = TextView(this).apply {
-
-            textSize = 16f
-
-            setPadding(
-                0,
-                10,
-                0,
-                15
-            )
-        }
-
-        val startObservationButton = Button(this).apply {
-
-            text = "START SCREEN OBSERVATION"
-
-            setOnClickListener {
-
-                startScreenCapture()
-            }
-        }
-
-        val stopObservationButton = Button(this).apply {
-
-            text = "STOP SCREEN OBSERVATION"
-
-            setOnClickListener {
-
-                ScreenCaptureService.stopCapture(
-                    this@MainActivity
+                setPadding(
+                    0,
+                    30,
+                    0,
+                    10
                 )
-
-                updateObservationStatus()
             }
-        }
+
+        observationStatus =
+            TextView(this).apply {
+
+                textSize = 16f
+
+                setPadding(
+                    0,
+                    10,
+                    0,
+                    15
+                )
+            }
+
+        val startObservationButton =
+            Button(this).apply {
+
+                text =
+                    "START SCREEN OBSERVATION"
+
+                setOnClickListener {
+
+                    startScreenCapture()
+                }
+            }
+
+        val stopObservationButton =
+            Button(this).apply {
+
+                text =
+                    "STOP SCREEN OBSERVATION"
+
+                setOnClickListener {
+
+                    ScreenCaptureService
+                        .stopCapture(
+                            this@MainActivity
+                        )
+
+                    updateObservationStatus()
+                    updateVisionStatus()
+                }
+            }
+
+        // ---------------------------------------------------------
+        // VISION STATUS
+        // ---------------------------------------------------------
+
+        val visionTitle =
+            TextView(this).apply {
+
+                text =
+                    "VISION STATUS"
+
+                textSize = 20f
+
+                setPadding(
+                    0,
+                    30,
+                    0,
+                    10
+                )
+            }
+
+        visionGameStatus =
+            TextView(this).apply {
+
+                textSize = 16f
+                setPadding(
+                    0,
+                    6,
+                    0,
+                    6
+                )
+            }
+
+        visionBoardStatus =
+            TextView(this).apply {
+
+                textSize = 16f
+                setPadding(
+                    0,
+                    6,
+                    0,
+                    6
+                )
+            }
+
+        visionOccupiedStatus =
+            TextView(this).apply {
+
+                textSize = 16f
+                setPadding(
+                    0,
+                    6,
+                    0,
+                    6
+                )
+            }
+
+        visionPiecesStatus =
+            TextView(this).apply {
+
+                textSize = 16f
+                setPadding(
+                    0,
+                    6,
+                    0,
+                    6
+                )
+            }
+
+        visionConfidenceStatus =
+            TextView(this).apply {
+
+                textSize = 16f
+                setPadding(
+                    0,
+                    6,
+                    0,
+                    6
+                )
+            }
+
+        visionActionStatus =
+            TextView(this).apply {
+
+                textSize = 16f
+
+                setPadding(
+                    0,
+                    12,
+                    0,
+                    15
+                )
+            }
 
         // ---------------------------------------------------------
         // PLAYER ENGINE
         // ---------------------------------------------------------
 
-        val engineTitle = TextView(this).apply {
+        val engineTitle =
+            TextView(this).apply {
 
-            text = "PLAYER ENGINE"
+                text =
+                    "PLAYER ENGINE"
 
-            textSize = 20f
+                textSize = 20f
 
-            setPadding(
-                0,
-                30,
-                0,
-                10
-            )
-        }
+                setPadding(
+                    0,
+                    30,
+                    0,
+                    10
+                )
+            }
 
-        val engineStatus = TextView(this).apply {
+        val engineStatus =
+            TextView(this).apply {
 
-            text =
-                """
-                
+                text =
+                    """
+                    
 Current Mode:
 Normal / Human-like
 
@@ -337,81 +472,125 @@ AI Decision
 Human-like Action
    ↓
 Verification
-                """.trimIndent()
+                    """.trimIndent()
 
-            textSize = 16f
+                textSize = 16f
 
-            setPadding(
-                0,
-                10,
-                0,
-                20
-            )
-        }
+                setPadding(
+                    0,
+                    10,
+                    0,
+                    20
+                )
+            }
 
         // ---------------------------------------------------------
         // STOP
         // ---------------------------------------------------------
 
-        val stopPlayerButton = Button(this).apply {
+        val stopPlayerButton =
+            Button(this).apply {
 
-            text = "STOP PLAYER"
+                text =
+                    "STOP PLAYER"
 
-            setOnClickListener {
+                setOnClickListener {
 
-                AutoPlayerAccessibilityService
-                    .stopPlayer(this@MainActivity)
+                    AutoPlayerAccessibilityService
+                        .stopPlayer(
+                            this@MainActivity
+                        )
 
-                ScreenCaptureService
-                    .stopCapture(this@MainActivity)
+                    ScreenCaptureService
+                        .stopCapture(
+                            this@MainActivity
+                        )
 
-                updateObservationStatus()
+                    updateObservationStatus()
+                    updateVisionStatus()
+                }
             }
-        }
 
         // ---------------------------------------------------------
         // ADD VIEWS
         // ---------------------------------------------------------
 
         content.addView(title)
-
         content.addView(subtitle)
-
         content.addView(description)
 
         content.addView(serviceStatus)
-
         content.addView(accessibilityButton)
-
         content.addView(refreshButton)
 
         content.addView(gameTitle)
-
         content.addView(gameSpinner)
-
         content.addView(selectedGameText)
-
         content.addView(saveGameButton)
-
         content.addView(launchGameButton)
 
         content.addView(observationTitle)
-
         content.addView(observationStatus)
-
         content.addView(startObservationButton)
-
         content.addView(stopObservationButton)
 
+        content.addView(visionTitle)
+        content.addView(visionGameStatus)
+        content.addView(visionBoardStatus)
+        content.addView(visionOccupiedStatus)
+        content.addView(visionPiecesStatus)
+        content.addView(visionConfidenceStatus)
+        content.addView(visionActionStatus)
+
         content.addView(engineTitle)
-
         content.addView(engineStatus)
-
         content.addView(stopPlayerButton)
 
         scrollView.addView(content)
 
         setContentView(scrollView)
+    }
+
+    // =============================================================
+    // VISION STATUS
+    // =============================================================
+
+    private fun updateVisionStatus() {
+
+        val targetName =
+            preferences.getString(
+                "target_name",
+                null
+            )
+
+        val running =
+            ScreenCaptureService
+                .isCapturing()
+
+        visionGameStatus.text =
+            "Game: " +
+                    (targetName ?: "None")
+
+        visionBoardStatus.text =
+            "Board: " +
+                    if (running) {
+                        "ANALYZING"
+                    } else {
+                        "WAITING"
+                    }
+
+        visionOccupiedStatus.text =
+            "Occupied Cells: --"
+
+        visionPiecesStatus.text =
+            "Pieces Detected: -- / 3"
+
+        visionConfidenceStatus.text =
+            "Confidence: --%"
+
+        visionActionStatus.text =
+            "Automatic Action: OFF\n" +
+                    "Mode: Observation Only"
     }
 
     // =============================================================
@@ -443,12 +622,11 @@ Verification
                     resolveInfo.activityInfo
                         ?: return@mapNotNull null
 
-                val packageName =
+                val appPackage =
                     activityInfo.packageName
 
-                // Never show Auto Game Player itself.
                 if (
-                    packageName ==
+                    appPackage ==
                     packageNameOfThisApp()
                 ) {
                     return@mapNotNull null
@@ -460,7 +638,9 @@ Verification
 
                 val label =
                     applicationInfo
-                        .loadLabel(packageManager)
+                        .loadLabel(
+                            packageManager
+                        )
                         ?.toString()
                         ?.trim()
 
@@ -472,7 +652,7 @@ Verification
 
                 AppInfo(
                     name = label,
-                    packageName = packageName
+                    packageName = appPackage
                 )
             }
             .distinctBy {
@@ -491,21 +671,21 @@ Verification
 
     private fun updateSpinner() {
 
-        val names: List<String>
+        val names =
+            if (apps.isEmpty()) {
 
-        if (apps.isEmpty()) {
+                listOf(
+                    "No launchable apps found"
+                )
 
-            names = listOf(
-                "No launchable apps found"
-            )
+            } else {
 
-        } else {
+                apps.map {
 
-            names = apps.map {
-
-                "${it.name}  •  ${it.packageName}"
+                    "${it.name}  •  " +
+                            it.packageName
+                }
             }
-        }
 
         val adapter =
             ArrayAdapter(
@@ -515,12 +695,13 @@ Verification
             )
 
         adapter.setDropDownViewResource(
-            android.R.layout.simple_spinner_dropdown_item
+            android.R.layout
+                .simple_spinner_dropdown_item
         )
 
-        gameSpinner.adapter = adapter
+        gameSpinner.adapter =
+            adapter
 
-        // Restore previously selected package.
         val savedPackage =
             preferences.getString(
                 "target_package",
@@ -546,37 +727,43 @@ Verification
             }
         }
 
-        gameSpinner.onItemSelectedListener =
-            object :
-                AdapterView.OnItemSelectedListener {
+        gameSpinner
+            .setOnItemSelectedListener(
+                object :
+                    android.widget
+                        .AdapterView
+                        .OnItemSelectedListener {
 
-                override fun onItemSelected(
-                    parent: AdapterView<*>?,
-                    view: View?,
-                    position: Int,
-                    id: Long
-                ) {
-
-                    if (
-                        position >= 0 &&
-                        position < apps.size
+                    override fun onItemSelected(
+                        parent:
+                            android.widget.AdapterView<*>?,
+                        view: View?,
+                        position: Int,
+                        id: Long
                     ) {
 
-                        val selected =
-                            apps[position]
+                        if (
+                            position >= 0 &&
+                            position < apps.size
+                        ) {
 
-                        selectedGameText.text =
-                            "Selected Game / App:\n" +
-                                    "${selected.name}\n" +
-                                    selected.packageName
+                            val selected =
+                                apps[position]
+
+                            selectedGameText.text =
+                                "Selected Game / App:\n" +
+                                        "${selected.name}\n" +
+                                        selected.packageName
+                        }
+                    }
+
+                    override fun onNothingSelected(
+                        parent:
+                            android.widget.AdapterView<*>?
+                    ) {
                     }
                 }
-
-                override fun onNothingSelected(
-                    parent: AdapterView<*>?
-                ) {
-                }
-            }
+            )
     }
 
     // =============================================================
@@ -712,6 +899,8 @@ Verification
 
         observationStatus.text =
             "Screen Observation: STARTING..."
+
+        updateVisionStatus()
     }
 
     // =============================================================
@@ -739,7 +928,8 @@ Verification
         val enabledServices =
             Settings.Secure.getString(
                 contentResolver,
-                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                Settings.Secure
+                    .ENABLED_ACCESSIBILITY_SERVICES
             )
                 ?: return false
 
@@ -764,7 +954,7 @@ Verification
     }
 
     // =============================================================
-    // SELECTED GAME STATUS
+    // SELECTED GAME
     // =============================================================
 
     private fun updateSelectedGame() {
@@ -798,7 +988,7 @@ Verification
     }
 
     // =============================================================
-    // OBSERVATION STATUS
+    // OBSERVATION
     // =============================================================
 
     private fun updateObservationStatus() {
@@ -816,10 +1006,6 @@ Verification
                 "○ Screen Observation: STOPPED"
             }
     }
-
-    // =============================================================
-    // APP PACKAGE
-    // =============================================================
 
     private fun packageNameOfThisApp():
             String {
