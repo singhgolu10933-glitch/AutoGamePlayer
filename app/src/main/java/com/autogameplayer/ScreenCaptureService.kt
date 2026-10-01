@@ -7,16 +7,23 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.util.DisplayMetrics
 import android.util.Log
+import com.autogameplayer.blockblitz.BlockBlitzState
+import com.autogameplayer.blockblitz.BlockBlitzVision
+import java.nio.ByteBuffer
 
 class ScreenCaptureService : Service() {
 
@@ -35,7 +42,10 @@ class ScreenCaptureService : Service() {
             resultCode: Int,
             data: Intent
         ) {
-            val intent = Intent(context, ScreenCaptureService::class.java).apply {
+            val intent = Intent(
+                context,
+                ScreenCaptureService::class.java
+            ).apply {
                 putExtra("result_code", resultCode)
                 putExtra("result_data", data)
             }
@@ -49,7 +59,10 @@ class ScreenCaptureService : Service() {
 
         fun stopCapture(context: Context) {
             context.stopService(
-                Intent(context, ScreenCaptureService::class.java)
+                Intent(
+                    context,
+                    ScreenCaptureService::class.java
+                )
             )
         }
     }
@@ -58,18 +71,21 @@ class ScreenCaptureService : Service() {
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
 
+    private var captureThread: HandlerThread? = null
+    private var captureHandler: Handler? = null
+
     private var lastFrameTime = 0L
 
-    /*
-     * IMPORTANT:
-     * Android requires this callback to be registered
-     * before createVirtualDisplay() is called.
-     */
+    private var latestVisionState: BlockBlitzState? = null
+
     private val mediaProjectionCallback =
         object : MediaProjection.Callback() {
 
             override fun onStop() {
-                Log.d(TAG, "MediaProjection stopped by system/user")
+                Log.d(
+                    TAG,
+                    "MediaProjection stopped"
+                )
 
                 capturing = false
 
@@ -92,7 +108,17 @@ class ScreenCaptureService : Service() {
 
         createNotificationChannel()
 
-        Log.d(TAG, "Screen capture service created")
+        captureThread = HandlerThread(
+            "AutoGamePlayerCaptureThread"
+        ).also {
+            it.start()
+            captureHandler = Handler(it.looper)
+        }
+
+        Log.d(
+            TAG,
+            "Screen capture service created"
+        )
     }
 
     override fun onStartCommand(
@@ -107,7 +133,10 @@ class ScreenCaptureService : Service() {
         }
 
         val resultCode =
-            intent.getIntExtra("result_code", 0)
+            intent.getIntExtra(
+                "result_code",
+                0
+            )
 
         val resultData =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -117,20 +146,31 @@ class ScreenCaptureService : Service() {
                 )
             } else {
                 @Suppress("DEPRECATION")
-                intent.getParcelableExtra<Intent>("result_data")
+                intent.getParcelableExtra<Intent>(
+                    "result_data"
+                )
             }
 
         if (resultData == null) {
-            Log.e(TAG, "Screen capture data missing")
+            Log.e(
+                TAG,
+                "Screen capture data missing"
+            )
+
             stopSelf()
+
             return START_NOT_STICKY
         }
 
         startCaptureForeground()
 
         try {
-            startProjection(resultCode, resultData)
+            startProjection(
+                resultCode,
+                resultData
+            )
         } catch (e: Exception) {
+
             Log.e(
                 TAG,
                 "Failed to start screen projection",
@@ -146,7 +186,8 @@ class ScreenCaptureService : Service() {
 
     private fun startCaptureForeground() {
 
-        val notification = createNotification()
+        val notification =
+            createNotification()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
 
@@ -197,12 +238,13 @@ class ScreenCaptureService : Service() {
         mediaProjection = projection
 
         /*
-         * IMPORTANT FIX:
-         * Register callback BEFORE createVirtualDisplay().
+         * IMPORTANT:
+         * Android requires the callback to be
+         * registered before createVirtualDisplay().
          */
         projection.registerCallback(
             mediaProjectionCallback,
-            null
+            captureHandler
         )
 
         val metrics = DisplayMetrics()
@@ -222,6 +264,10 @@ class ScreenCaptureService : Service() {
         val height = metrics.heightPixels
         val density = metrics.densityDpi
 
+        /*
+         * Keep observation resolution reasonable
+         * for phone-only AI processing.
+         */
         val observationWidth =
             width.coerceAtMost(1280)
 
@@ -244,12 +290,11 @@ class ScreenCaptureService : Service() {
             { reader ->
                 processLatestFrame(reader)
             },
-            null
+            captureHandler
         )
 
         /*
-         * Callback has already been registered above.
-         * It is now safe to create the VirtualDisplay.
+         * Callback has already been registered.
          */
         virtualDisplay =
             projection.createVirtualDisplay(
@@ -260,7 +305,7 @@ class ScreenCaptureService : Service() {
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 imageReader?.surface,
                 null,
-                null
+                captureHandler
             )
 
         capturing = true
@@ -276,15 +321,30 @@ class ScreenCaptureService : Service() {
         reader: ImageReader
     ) {
 
+        val now =
+            System.currentTimeMillis()
+
+        /*
+         * Vision processing at roughly 4 FPS.
+         * This keeps CPU usage reasonable.
+         */
+        if (now - lastFrameTime < 250L) {
+            return
+        }
+
+        lastFrameTime = now
+
         val image =
             try {
                 reader.acquireLatestImage()
             } catch (e: Exception) {
+
                 Log.e(
                     TAG,
-                    "Could not acquire screen frame",
+                    "Could not acquire image",
                     e
                 )
+
                 null
             }
 
@@ -294,30 +354,142 @@ class ScreenCaptureService : Service() {
 
         try {
 
-            val now =
-                System.currentTimeMillis()
+            val bitmap =
+                imageToBitmap(image)
 
-            /*
-             * Human-like / low-load observation rate.
-             */
-            if (now - lastFrameTime < 250L) {
-                return
+            if (bitmap != null) {
+
+                analyzeFrame(bitmap)
+
+                bitmap.recycle()
             }
 
-            lastFrameTime = now
+        } catch (e: Exception) {
 
-            val width = image.width
-            val height = image.height
-
-            Log.d(
+            Log.e(
                 TAG,
-                "Frame observed: ${width}x${height}"
+                "Frame processing failed",
+                e
             )
 
         } finally {
 
             image.close()
         }
+    }
+
+    private fun imageToBitmap(
+        image: Image
+    ): Bitmap? {
+
+        val plane =
+            image.planes.firstOrNull()
+                ?: return null
+
+        val buffer: ByteBuffer =
+            plane.buffer
+
+        val pixelStride =
+            plane.pixelStride
+
+        val rowStride =
+            plane.rowStride
+
+        val width =
+            image.width
+
+        val height =
+            image.height
+
+        if (pixelStride <= 0 ||
+            rowStride <= 0 ||
+            width <= 0 ||
+            height <= 0
+        ) {
+            return null
+        }
+
+        val rowPadding =
+            rowStride -
+                    pixelStride * width
+
+        val paddedWidth =
+            width +
+                    rowPadding / pixelStride
+
+        val bitmapWithPadding =
+            Bitmap.createBitmap(
+                paddedWidth,
+                height,
+                Bitmap.Config.ARGB_8888
+            )
+
+        buffer.rewind()
+
+        bitmapWithPadding.copyPixelsFromBuffer(
+            buffer
+        )
+
+        val croppedBitmap =
+            if (paddedWidth != width) {
+
+                Bitmap.createBitmap(
+                    bitmapWithPadding,
+                    0,
+                    0,
+                    width,
+                    height
+                )
+
+            } else {
+
+                bitmapWithPadding
+            }
+
+        if (croppedBitmap !== bitmapWithPadding) {
+            bitmapWithPadding.recycle()
+        }
+
+        return croppedBitmap
+    }
+
+    private fun analyzeFrame(
+        bitmap: Bitmap
+    ) {
+
+        /*
+         * Current stage is READ-ONLY.
+         *
+         * No tap.
+         * No swipe.
+         * No drag.
+         * No automatic gameplay.
+         */
+        val state =
+            BlockBlitzVision.analyze(
+                bitmap
+            )
+
+        latestVisionState = state
+
+        val occupied =
+            state.board
+                ?.occupiedCount()
+                ?: -1
+
+        val detectedPieces =
+            state.pieces.count {
+                it.detected
+            }
+
+        Log.d(
+            TAG,
+            "BLOCK BLITZ VISION -> " +
+                    "occupiedCells=$occupied " +
+                    "pieces=$detectedPieces " +
+                    "confidence=" +
+                    state.confidence
+        )
     }
 
     private fun createNotification(): Notification {
@@ -341,7 +513,10 @@ class ScreenCaptureService : Service() {
 
     private fun createNotificationChannel() {
 
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+        if (
+            Build.VERSION.SDK_INT <
+            Build.VERSION_CODES.O
+        ) {
             return
         }
 
@@ -361,22 +536,30 @@ class ScreenCaptureService : Service() {
                 NotificationManager::class.java
             )
 
-        manager.createNotificationChannel(channel)
+        manager.createNotificationChannel(
+            channel
+        )
     }
 
     private fun stopProjection() {
 
         capturing = false
 
-        val projection = mediaProjection
+        val projection =
+            mediaProjection
 
         if (projection != null) {
 
             try {
+
                 projection.unregisterCallback(
                     mediaProjectionCallback
                 )
-            } catch (e: Exception) {
+
+            } catch (
+                e: Exception
+            ) {
+
                 Log.d(
                     TAG,
                     "Callback already unregistered"
@@ -393,8 +576,13 @@ class ScreenCaptureService : Service() {
         if (projection != null) {
 
             try {
+
                 projection.stop()
-            } catch (e: Exception) {
+
+            } catch (
+                e: Exception
+            ) {
+
                 Log.d(
                     TAG,
                     "MediaProjection already stopped"
@@ -408,6 +596,12 @@ class ScreenCaptureService : Service() {
     override fun onDestroy() {
 
         stopProjection()
+
+        captureThread?.quitSafely()
+        captureThread = null
+        captureHandler = null
+
+        latestVisionState = null
 
         if (instance === this) {
             instance = null
