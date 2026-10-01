@@ -7,15 +7,13 @@ import android.graphics.Color
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.provider.Settings
-import android.view.Gravity
 import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Spinner
-import android.widget.ArrayAdapter
 import android.widget.TextView
-import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 
 class MainActivity : Activity() {
@@ -26,6 +24,21 @@ class MainActivity : Activity() {
         private const val VISION_PREFS = "vision_status"
     }
 
+    data class AppEntry(
+        val name: String,
+        val packageName: String
+    ) {
+        override fun toString(): String {
+            return "$name • $packageName"
+        }
+    }
+
+    private val apps =
+        mutableListOf<AppEntry>()
+
+    private var selectedPackage:
+            String? = null
+
     private lateinit var statusText: TextView
     private lateinit var observationText: TextView
 
@@ -35,6 +48,10 @@ class MainActivity : Activity() {
     private lateinit var piecesText: TextView
     private lateinit var confidenceText: TextView
 
+    private lateinit var piece1Text: TextView
+    private lateinit var piece2Text: TextView
+    private lateinit var piece3Text: TextView
+
     private lateinit var bestMoveText: TextView
     private lateinit var bestPieceText: TextView
     private lateinit var bestTargetText: TextView
@@ -42,11 +59,6 @@ class MainActivity : Activity() {
     private lateinit var bestReasonText: TextView
 
     private lateinit var appSpinner: Spinner
-
-    private val apps =
-        mutableListOf<AppEntry>()
-
-    private var selectedPackage: String? = null
 
     private val refreshRunnable =
         object : Runnable {
@@ -61,15 +73,6 @@ class MainActivity : Activity() {
                 )
             }
         }
-
-    data class AppEntry(
-        val name: String,
-        val packageName: String
-    ) {
-        override fun toString(): String {
-            return "$name • $packageName"
-        }
-    }
 
     // ============================================================
     // CREATE
@@ -128,10 +131,6 @@ class MainActivity : Activity() {
                     LinearLayout.VERTICAL
             }
 
-        // --------------------------------------------------------
-        // TITLE
-        // --------------------------------------------------------
-
         content.addView(
             textView(
                 "AUTO GAME PLAYER",
@@ -173,7 +172,7 @@ class MainActivity : Activity() {
             statusText
         )
 
-        val accessibilityButton =
+        content.addView(
             Button(this).apply {
 
                 text =
@@ -188,9 +187,6 @@ class MainActivity : Activity() {
                     )
                 }
             }
-
-        content.addView(
-            accessibilityButton
         )
 
         content.addView(
@@ -198,7 +194,7 @@ class MainActivity : Activity() {
         )
 
         // --------------------------------------------------------
-        // TARGET GAME
+        // TARGET
         // --------------------------------------------------------
 
         content.addView(
@@ -214,38 +210,28 @@ class MainActivity : Activity() {
             appSpinner
         )
 
-        val saveTargetButton =
+        content.addView(
             Button(this).apply {
 
                 text =
                     "SELECT TARGET GAME"
 
                 setOnClickListener {
-
                     saveSelectedTarget()
-
                 }
             }
-
-        content.addView(
-            saveTargetButton
         )
 
-        val launchButton =
+        content.addView(
             Button(this).apply {
 
                 text =
                     "OPEN SELECTED GAME"
 
                 setOnClickListener {
-
                     launchSelectedGame()
-
                 }
             }
-
-        content.addView(
-            launchButton
         )
 
         content.addView(
@@ -253,7 +239,7 @@ class MainActivity : Activity() {
         )
 
         // --------------------------------------------------------
-        // SCREEN OBSERVATION
+        // SCREEN
         // --------------------------------------------------------
 
         content.addView(
@@ -273,24 +259,19 @@ class MainActivity : Activity() {
             observationText
         )
 
-        val startCaptureButton =
+        content.addView(
             Button(this).apply {
 
                 text =
                     "START SCREEN OBSERVATION"
 
                 setOnClickListener {
-
                     requestScreenCapture()
-
                 }
             }
-
-        content.addView(
-            startCaptureButton
         )
 
-        val stopCaptureButton =
+        content.addView(
             Button(this).apply {
 
                 text =
@@ -302,13 +283,8 @@ class MainActivity : Activity() {
                         .stopCapture(
                             this@MainActivity
                         )
-
-                    updateStatus()
                 }
             }
-
-        content.addView(
-            stopCaptureButton
         )
 
         content.addView(
@@ -360,24 +336,57 @@ class MainActivity : Activity() {
                 false
             )
 
+        content.addView(gameText)
+        content.addView(boardText)
+        content.addView(occupiedText)
+        content.addView(piecesText)
+        content.addView(confidenceText)
+
         content.addView(
-            gameText
+            spacer(12)
+        )
+
+        // --------------------------------------------------------
+        // PIECE SHAPES
+        // --------------------------------------------------------
+
+        content.addView(
+            sectionTitle(
+                "DETECTED PIECE SHAPES"
+            )
+        )
+
+        piece1Text =
+            textView(
+                "Piece 1: --",
+                15f,
+                true
+            )
+
+        piece2Text =
+            textView(
+                "Piece 2: --",
+                15f,
+                true
+            )
+
+        piece3Text =
+            textView(
+                "Piece 3: --",
+                15f,
+                true
+            )
+
+        content.addView(
+            piece1Text
         )
 
         content.addView(
-            boardText
+            piece2Text
         )
 
         content.addView(
-            occupiedText
-        )
-
-        content.addView(
-            piecesText
-        )
-
-        content.addView(
-            confidenceText
+            piece3Text
         )
 
         content.addView(
@@ -385,7 +394,7 @@ class MainActivity : Activity() {
         )
 
         // --------------------------------------------------------
-        // AI DECISION
+        // AI
         // --------------------------------------------------------
 
         content.addView(
@@ -410,7 +419,7 @@ class MainActivity : Activity() {
 
         bestTargetText =
             textView(
-                "Target: Row --, Column --",
+                "Target: --",
                 15f,
                 false
             )
@@ -429,32 +438,18 @@ class MainActivity : Activity() {
                 false
             )
 
-        content.addView(
-            bestMoveText
-        )
-
-        content.addView(
-            bestPieceText
-        )
-
-        content.addView(
-            bestTargetText
-        )
-
-        content.addView(
-            bestScoreText
-        )
-
-        content.addView(
-            bestReasonText
-        )
+        content.addView(bestMoveText)
+        content.addView(bestPieceText)
+        content.addView(bestTargetText)
+        content.addView(bestScoreText)
+        content.addView(bestReasonText)
 
         content.addView(
             spacer(18)
         )
 
         // --------------------------------------------------------
-        // PLAYER ENGINE
+        // ENGINE
         // --------------------------------------------------------
 
         content.addView(
@@ -491,11 +486,7 @@ class MainActivity : Activity() {
             spacer(20)
         )
 
-        // --------------------------------------------------------
-        // STOP
-        // --------------------------------------------------------
-
-        val stopButton =
+        content.addView(
             Button(this).apply {
 
                 text =
@@ -510,13 +501,8 @@ class MainActivity : Activity() {
                         .stopCapture(
                             this@MainActivity
                         )
-
-                    updateStatus()
                 }
             }
-
-        content.addView(
-            stopButton
         )
 
         scroll.addView(
@@ -535,7 +521,7 @@ class MainActivity : Activity() {
     }
 
     // ============================================================
-    // TEXT VIEW
+    // TEXT
     // ============================================================
 
     private fun textView(
@@ -603,15 +589,12 @@ class MainActivity : Activity() {
     }
 
     // ============================================================
-    // LOAD APPS
+    // APPS
     // ============================================================
 
     private fun loadApps() {
 
         apps.clear()
-
-        val packageManager =
-            packageManager
 
         val intent =
             Intent(
@@ -630,9 +613,6 @@ class MainActivity : Activity() {
                     PackageManager.MATCH_ALL
                 )
 
-        val currentPackage =
-            packageName
-
         for (info in activities) {
 
             val appInfo =
@@ -640,25 +620,24 @@ class MainActivity : Activity() {
                     ?.applicationInfo
                     ?: continue
 
-            val pkg =
-                appInfo.packageName
-
             if (
-                pkg == currentPackage
+                appInfo.packageName ==
+                packageName
             ) {
                 continue
             }
 
-            val name =
-                appInfo.loadLabel(
-                    packageManager
-                )
-                    .toString()
-
             apps.add(
                 AppEntry(
-                    name = name,
-                    packageName = pkg
+                    name =
+                        appInfo
+                            .loadLabel(
+                                packageManager
+                            )
+                            .toString(),
+
+                    packageName =
+                        appInfo.packageName
                 )
             )
         }
@@ -699,12 +678,6 @@ class MainActivity : Activity() {
                 "target_package",
                 null
             )
-
-        if (
-            selectedPackage == null
-        ) {
-            return
-        }
 
         val index =
             apps.indexOfFirst {
@@ -759,13 +732,10 @@ class MainActivity : Activity() {
 
         gameText.text =
             "Game: ${selected.name}"
-
-        statusText.text =
-            "Accessibility Service: Target selected"
     }
 
     // ============================================================
-    // LAUNCH GAME
+    // LAUNCH
     // ============================================================
 
     private fun launchSelectedGame() {
@@ -809,7 +779,7 @@ class MainActivity : Activity() {
     }
 
     // ============================================================
-    // SCREEN CAPTURE REQUEST
+    // SCREEN CAPTURE
     // ============================================================
 
     private fun requestScreenCapture() {
@@ -819,20 +789,13 @@ class MainActivity : Activity() {
                 Context.MEDIA_PROJECTION_SERVICE
             ) as MediaProjectionManager
 
-        val intent =
-            manager.createScreenCaptureIntent()
-
         startActivityForResult(
-            intent,
+            manager.createScreenCaptureIntent(),
             SCREEN_CAPTURE_REQUEST
         )
     }
 
-    // ============================================================
-    // CAPTURE RESULT
-    // ============================================================
-
-    @Deprecated("Deprecated in Android API")
+    @Deprecated("Deprecated Android API")
     override fun onActivityResult(
         requestCode: Int,
         resultCode: Int,
@@ -856,10 +819,6 @@ class MainActivity : Activity() {
             resultCode != RESULT_OK ||
             data == null
         ) {
-
-            observationText.text =
-                "Screen Observation: Permission denied"
-
             return
         }
 
@@ -869,27 +828,20 @@ class MainActivity : Activity() {
                 resultCode,
                 data
             )
-
-        observationText.text =
-            "Screen Observation: STARTING..."
     }
 
     // ============================================================
-    // STATUS UPDATE
+    // STATUS
     // ============================================================
 
     private fun updateStatus() {
 
-        val accessibilityEnabled =
-            isAccessibilityServiceEnabled()
-
         statusText.text =
-            if (accessibilityEnabled) {
-
+            if (
+                isAccessibilityServiceEnabled()
+            ) {
                 "Accessibility Service: ENABLED"
-
             } else {
-
                 "Accessibility Service: DISABLED"
             }
 
@@ -898,11 +850,8 @@ class MainActivity : Activity() {
                 ScreenCaptureService
                     .isCapturing()
             ) {
-
                 "Screen Observation: RUNNING"
-
             } else {
-
                 "Screen Observation: STOPPED"
             }
 
@@ -910,7 +859,7 @@ class MainActivity : Activity() {
     }
 
     // ============================================================
-    // VISION STATUS
+    // VISION UI
     // ============================================================
 
     private fun updateVisionStatus() {
@@ -941,6 +890,15 @@ class MainActivity : Activity() {
             confidenceText.text =
                 "Confidence: --%"
 
+            piece1Text.text =
+                "Piece 1: --"
+
+            piece2Text.text =
+                "Piece 2: --"
+
+            piece3Text.text =
+                "Piece 3: --"
+
             bestMoveText.text =
                 "BEST MOVE: WAITING"
 
@@ -948,7 +906,7 @@ class MainActivity : Activity() {
                 "Piece: --"
 
             bestTargetText.text =
-                "Target: Row --, Column --"
+                "Target: --"
 
             bestScoreText.text =
                 "Score: --"
@@ -978,14 +936,7 @@ class MainActivity : Activity() {
             )
 
         boardText.text =
-            if (occupied >= 0) {
-
-                "Board: DETECTED"
-
-            } else {
-
-                "Board: NOT DETECTED"
-            }
+            "Board: DETECTED"
 
         occupiedText.text =
             "Occupied Cells: $occupied"
@@ -997,16 +948,38 @@ class MainActivity : Activity() {
             "Confidence: $confidence%"
 
         // --------------------------------------------------------
+        // SHAPES
+        // --------------------------------------------------------
+
+        piece1Text.text =
+            formatPiece(
+                prefs,
+                0
+            )
+
+        piece2Text.text =
+            formatPiece(
+                prefs,
+                1
+            )
+
+        piece3Text.text =
+            formatPiece(
+                prefs,
+                2
+            )
+
+        // --------------------------------------------------------
         // BEST MOVE
         // --------------------------------------------------------
 
-        val bestAvailable =
+        val availableMove =
             prefs.getBoolean(
                 "best_move_available",
                 false
             )
 
-        if (!bestAvailable) {
+        if (!availableMove) {
 
             bestMoveText.text =
                 "BEST MOVE: NO LEGAL MOVE"
@@ -1021,7 +994,7 @@ class MainActivity : Activity() {
                 "Score: --"
 
             bestReasonText.text =
-                "Reason: No valid placement detected"
+                "Reason: No legal placement"
 
             return
         }
@@ -1075,28 +1048,131 @@ class MainActivity : Activity() {
     }
 
     // ============================================================
-    // ACCESSIBILITY CHECK
+    // FORMAT PIECE
+    // ============================================================
+
+    private fun formatPiece(
+        prefs:
+            android.content.SharedPreferences,
+        index: Int
+    ): String {
+
+        val detected =
+            prefs.getBoolean(
+                "piece_${index}_detected",
+                false
+            )
+
+        val shape =
+            prefs.getString(
+                "piece_${index}_shape",
+                ""
+            )
+                ?: ""
+
+        if (
+            !detected ||
+            shape.isBlank()
+        ) {
+            return "Piece ${index + 1}: NOT DETECTED"
+        }
+
+        val cells =
+            shape.split(";")
+                .mapNotNull {
+
+                    val parts =
+                        it.split(",")
+
+                    if (
+                        parts.size != 2
+                    ) {
+                        null
+                    } else {
+
+                        Pair(
+                            parts[0].toIntOrNull()
+                                ?: return@mapNotNull null,
+
+                            parts[1].toIntOrNull()
+                                ?: return@mapNotNull null
+                        )
+                    }
+                }
+
+        if (cells.isEmpty()) {
+            return "Piece ${index + 1}: INVALID"
+        }
+
+        val maxRow =
+            cells.maxOf {
+                it.first
+            }
+
+        val maxColumn =
+            cells.maxOf {
+                it.second
+            }
+
+        val rows =
+            maxRow + 1
+
+        val columns =
+            maxColumn + 1
+
+        val grid =
+            Array(rows) {
+                CharArray(columns) {
+                    '.'
+                }
+            }
+
+        for ((row, column) in cells) {
+
+            if (
+                row in 0 until rows &&
+                column in 0 until columns
+            ) {
+                grid[row][column] =
+                    '■'
+            }
+        }
+
+        val visual =
+            grid.joinToString(
+                separator = "\n"
+            ) {
+                String(it)
+            }
+
+        return "Piece ${index + 1}:\n$visual"
+    }
+
+    // ============================================================
+    // ACCESSIBILITY
     // ============================================================
 
     private fun isAccessibilityServiceEnabled():
             Boolean {
 
-        val expectedComponent =
+        val expected =
             "$packageName/" +
-                    AutoPlayerAccessibilityService::class.java.name
+                    AutoPlayerAccessibilityService
+                        ::class.java.name
 
-        val enabledServices =
+        val enabled =
             Settings.Secure.getString(
                 contentResolver,
-                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                Settings.Secure
+                    .ENABLED_ACCESSIBILITY_SERVICES
             )
                 ?: return false
 
-        return enabledServices
-            .split(':')
+        return enabled
+            .split(":")
             .any {
                 it.equals(
-                    expectedComponent,
+                    expected,
                     ignoreCase = true
                 )
             }
