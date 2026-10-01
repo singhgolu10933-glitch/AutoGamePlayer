@@ -39,7 +39,7 @@ class ScreenCaptureService : Service() {
             2001
 
         private var instance:
-                ScreenCaptureService? = null
+            ScreenCaptureService? = null
 
         private var capturing =
             false
@@ -118,20 +118,11 @@ class ScreenCaptureService : Service() {
     private var lastFrameTime =
         0L
 
-    // ============================================================
-    // MEDIA PROJECTION CALLBACK
-    // ============================================================
-
     private val mediaProjectionCallback =
         object :
             MediaProjection.Callback() {
 
             override fun onStop() {
-
-                Log.d(
-                    TAG,
-                    "MediaProjection stopped"
-                )
 
                 capturing = false
 
@@ -143,15 +134,11 @@ class ScreenCaptureService : Service() {
 
                 mediaProjection = null
 
-                updateVisionStopped()
+                clearVisionStatus()
 
                 stopSelf()
             }
         }
-
-    // ============================================================
-    // CREATE
-    // ============================================================
 
     override fun onCreate() {
 
@@ -173,16 +160,7 @@ class ScreenCaptureService : Service() {
                         it.looper
                     )
             }
-
-        Log.d(
-            TAG,
-            "Screen capture service created"
-        )
     }
-
-    // ============================================================
-    // START COMMAND
-    // ============================================================
 
     override fun onStartCommand(
         intent: Intent?,
@@ -225,11 +203,6 @@ class ScreenCaptureService : Service() {
 
         if (resultData == null) {
 
-            Log.e(
-                TAG,
-                "Screen capture data missing"
-            )
-
             stopSelf()
 
             return START_NOT_STICKY
@@ -248,12 +221,11 @@ class ScreenCaptureService : Service() {
 
             Log.e(
                 TAG,
-                "Failed to start screen projection",
+                "Projection failed",
                 e
             )
 
             stopProjection()
-
             stopSelf()
         }
 
@@ -261,7 +233,7 @@ class ScreenCaptureService : Service() {
     }
 
     // ============================================================
-    // FOREGROUND SERVICE
+    // FOREGROUND
     // ============================================================
 
     private fun startCaptureForeground() {
@@ -291,7 +263,7 @@ class ScreenCaptureService : Service() {
     }
 
     // ============================================================
-    // START PROJECTION
+    // PROJECTION
     // ============================================================
 
     private fun startProjection(
@@ -311,18 +283,7 @@ class ScreenCaptureService : Service() {
                 resultCode,
                 data
             )
-
-        if (projection == null) {
-
-            Log.e(
-                TAG,
-                "MediaProjection could not be created"
-            )
-
-            stopSelf()
-
-            return
-        }
+                ?: return
 
         mediaProjection =
             projection
@@ -361,14 +322,6 @@ class ScreenCaptureService : Service() {
             width <= 0 ||
             height <= 0
         ) {
-
-            Log.e(
-                TAG,
-                "Invalid display dimensions"
-            )
-
-            stopSelf()
-
             return
         }
 
@@ -430,17 +383,10 @@ class ScreenCaptureService : Service() {
                 true
             )
             .apply()
-
-        Log.d(
-            TAG,
-            "Screen observation started: " +
-                    "${observationWidth}x" +
-                    observationHeight
-        )
     }
 
     // ============================================================
-    // FRAME PROCESSING
+    // FRAME
     // ============================================================
 
     private fun processLatestFrame(
@@ -450,19 +396,10 @@ class ScreenCaptureService : Service() {
         val now =
             System.currentTimeMillis()
 
-        /*
-         * Approximately 4 FPS.
-         *
-         * This keeps CPU usage reasonable
-         * while still giving the AI frequent
-         * board updates.
-         */
-
         if (
             now - lastFrameTime <
             250L
         ) {
-
             return
         }
 
@@ -471,17 +408,10 @@ class ScreenCaptureService : Service() {
 
         val image =
             try {
-
                 reader.acquireLatestImage()
-
-            } catch (e: Exception) {
-
-                Log.e(
-                    TAG,
-                    "Could not acquire image",
-                    e
-                )
-
+            } catch (
+                e: Exception
+            ) {
                 null
             }
 
@@ -505,7 +435,9 @@ class ScreenCaptureService : Service() {
                 bitmap.recycle()
             }
 
-        } catch (e: Exception) {
+        } catch (
+            e: Exception
+        ) {
 
             Log.e(
                 TAG,
@@ -528,8 +460,7 @@ class ScreenCaptureService : Service() {
     ): Bitmap? {
 
         val plane =
-            image.planes
-                .firstOrNull()
+            image.planes.firstOrNull()
                 ?: return null
 
         val buffer:
@@ -554,7 +485,6 @@ class ScreenCaptureService : Service() {
             width <= 0 ||
             height <= 0
         ) {
-
             return null
         }
 
@@ -567,7 +497,7 @@ class ScreenCaptureService : Service() {
                     rowPadding /
                     pixelStride
 
-        val bitmapWithPadding =
+        val padded =
             Bitmap.createBitmap(
                 paddedWidth,
                 height,
@@ -576,18 +506,17 @@ class ScreenCaptureService : Service() {
 
         buffer.rewind()
 
-        bitmapWithPadding
-            .copyPixelsFromBuffer(
-                buffer
-            )
+        padded.copyPixelsFromBuffer(
+            buffer
+        )
 
-        val resultBitmap =
+        val result =
             if (
                 paddedWidth != width
             ) {
 
                 Bitmap.createBitmap(
-                    bitmapWithPadding,
+                    padded,
                     0,
                     0,
                     width,
@@ -596,18 +525,16 @@ class ScreenCaptureService : Service() {
 
             } else {
 
-                bitmapWithPadding
+                padded
             }
 
         if (
-            resultBitmap !==
-            bitmapWithPadding
+            result !== padded
         ) {
-
-            bitmapWithPadding.recycle()
+            padded.recycle()
         }
 
-        return resultBitmap
+        return result
     }
 
     // ============================================================
@@ -618,22 +545,7 @@ class ScreenCaptureService : Service() {
         bitmap: Bitmap
     ) {
 
-        /*
-         * IMPORTANT:
-         *
-         * This stage is READ-ONLY.
-         *
-         * No tap.
-         * No swipe.
-         * No drag.
-         * No automatic gameplay.
-         */
-
         try {
-
-            // ----------------------------------------------------
-            // VISION
-            // ----------------------------------------------------
 
             val state =
                 BlockBlitzVision.analyze(
@@ -644,8 +556,7 @@ class ScreenCaptureService : Service() {
                 state.board
 
             val occupied =
-                board
-                    ?.occupiedCount()
+                board?.occupiedCount()
                     ?: -1
 
             val detectedPieces =
@@ -665,38 +576,29 @@ class ScreenCaptureService : Service() {
                         100
                     )
 
-            // ----------------------------------------------------
-            // AI
-            // ----------------------------------------------------
-
             val bestMove =
                 if (
                     board != null &&
                     detectedPieces > 0
                 ) {
 
-                    BlockBlitzAi
-                        .findBestMove(
-                            state
-                        )
+                    BlockBlitzAi.findBestMove(
+                        state
+                    )
 
                 } else {
 
                     null
                 }
 
-            // ----------------------------------------------------
-            // SAVE STATUS
-            // ----------------------------------------------------
-
-            val preferences =
+            val prefs =
                 getSharedPreferences(
                     "vision_status",
                     MODE_PRIVATE
                 )
 
             val editor =
-                preferences.edit()
+                prefs.edit()
 
             editor
                 .putBoolean(
@@ -717,27 +619,27 @@ class ScreenCaptureService : Service() {
                 )
 
             // ----------------------------------------------------
-            // PIECE INFORMATION
+            // SAVE ACTUAL PIECE SHAPES
             // ----------------------------------------------------
 
             for (piece in state.pieces) {
 
-                val cellsText =
+                val shapeText =
                     piece.cells.joinToString(
                         separator = ";"
                     ) {
                         "${it.first},${it.second}"
                     }
 
-                editor.putString(
-                    "piece_${piece.index}_cells",
-                    cellsText
-                )
-
-                editor.putBoolean(
-                    "piece_${piece.index}_detected",
-                    piece.detected
-                )
+                editor
+                    .putString(
+                        "piece_${piece.index}_shape",
+                        shapeText
+                    )
+                    .putBoolean(
+                        "piece_${piece.index}_detected",
+                        piece.detected
+                    )
             }
 
             // ----------------------------------------------------
@@ -774,11 +676,11 @@ class ScreenCaptureService : Service() {
 
                 Log.d(
                     TAG,
-                    "BLOCK BLITZ AI -> " +
-                            "piece=${bestMove.pieceIndex} " +
-                            "row=${bestMove.row} " +
-                            "column=${bestMove.column} " +
-                            "score=${bestMove.score} " +
+                    "AI -> " +
+                            "piece=${bestMove.pieceIndex + 1}, " +
+                            "row=${bestMove.row}, " +
+                            "column=${bestMove.column}, " +
+                            "score=${bestMove.score}, " +
                             "reason=${bestMove.reason}"
                 )
 
@@ -792,34 +694,17 @@ class ScreenCaptureService : Service() {
                     .remove(
                         "best_move_reason"
                     )
-
-                Log.d(
-                    TAG,
-                    "BLOCK BLITZ AI -> " +
-                            "No legal move"
-                )
             }
 
             editor.apply()
 
-            // ----------------------------------------------------
-            // FINAL LOG
-            // ----------------------------------------------------
-
-            Log.d(
-                TAG,
-                "BLOCK BLITZ VISION -> " +
-                        "occupiedCells=$occupied " +
-                        "pieces=$detectedPieces " +
-                        "confidence=$confidence% " +
-                        "bestMove=${bestMove != null}"
-            )
-
-        } catch (e: Exception) {
+        } catch (
+            e: Exception
+        ) {
 
             Log.e(
                 TAG,
-                "Vision/AI analysis failed",
+                "Vision/AI failed",
                 e
             )
         }
@@ -843,8 +728,7 @@ class ScreenCaptureService : Service() {
                 "Screen observation is active"
             )
             .setSmallIcon(
-                android.R.drawable
-                    .ic_menu_view
+                android.R.drawable.ic_menu_view
             )
             .setOngoing(true)
             .build()
@@ -856,7 +740,6 @@ class ScreenCaptureService : Service() {
             Build.VERSION.SDK_INT <
             Build.VERSION_CODES.O
         ) {
-
             return
         }
 
@@ -866,25 +749,18 @@ class ScreenCaptureService : Service() {
                 "Auto Game Player Screen Observation",
                 NotificationManager
                     .IMPORTANCE_LOW
-            ).apply {
-
-                description =
-                    "Shows when user-approved " +
-                    "screen observation is active."
-            }
-
-        val manager =
-            getSystemService(
-                NotificationManager::class.java
             )
 
-        manager.createNotificationChannel(
-            channel
+        getSystemService(
+            NotificationManager::class.java
         )
+            .createNotificationChannel(
+                channel
+            )
     }
 
     // ============================================================
-    // STOP PROJECTION
+    // STOP
     // ============================================================
 
     private fun stopProjection() {
@@ -897,11 +773,9 @@ class ScreenCaptureService : Service() {
         if (projection != null) {
 
             try {
-
                 projection.unregisterCallback(
                     mediaProjectionCallback
                 )
-
             } catch (_: Exception) {
             }
         }
@@ -917,23 +791,17 @@ class ScreenCaptureService : Service() {
         if (projection != null) {
 
             try {
-
                 projection.stop()
-
             } catch (_: Exception) {
             }
         }
 
         mediaProjection = null
 
-        updateVisionStopped()
+        clearVisionStatus()
     }
 
-    // ============================================================
-    // VISION STOPPED STATUS
-    // ============================================================
-
-    private fun updateVisionStopped() {
+    private fun clearVisionStatus() {
 
         getSharedPreferences(
             "vision_status",
@@ -951,10 +819,6 @@ class ScreenCaptureService : Service() {
             .apply()
     }
 
-    // ============================================================
-    // DESTROY
-    // ============================================================
-
     override fun onDestroy() {
 
         stopProjection()
@@ -968,22 +832,12 @@ class ScreenCaptureService : Service() {
             instance = null
         }
 
-        Log.d(
-            TAG,
-            "Screen capture service stopped"
-        )
-
         super.onDestroy()
     }
-
-    // ============================================================
-    // BIND
-    // ============================================================
 
     override fun onBind(
         intent: Intent?
     ): IBinder? {
-
         return null
     }
 }
