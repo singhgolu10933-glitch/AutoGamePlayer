@@ -137,7 +137,7 @@ class ScreenCaptureService : Service() {
      * Vision runs approximately every 250 ms.
      * This is about 4 FPS.
      */
-    private const val FRAME_INTERVAL_MS =
+    private  val FRAME_INTERVAL_MS =
         250L
 
     // ============================================================
