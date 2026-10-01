@@ -1,18 +1,17 @@
 package com.autogameplayer.blockblitz
 
-import android.util.Log
+import kotlin.math.abs
 
 data class BlockBlitzMove(
     val pieceIndex: Int,
     val row: Int,
     val column: Int,
-    val score: Double,
+    val score: Float,
+    val linesCleared: Int,
     val reason: String
 )
 
 object BlockBlitzAi {
-
-    private const val TAG = "BlockBlitzAi"
 
     private const val ROWS = 8
     private const val COLUMNS = 8
@@ -30,50 +29,58 @@ object BlockBlitzAi {
                 ?: return null
 
         if (
-            board.rows != ROWS ||
-            board.columns != COLUMNS
+            state.pieces.isEmpty()
         ) {
             return null
         }
 
         var bestMove:
-                BlockBlitzMove? =
-            null
-
-        var bestScore =
-            Double.NEGATIVE_INFINITY
-
-        var legalMoves =
-            0
+                BlockBlitzMove? = null
 
         for (piece in state.pieces) {
 
-            if (
-                !piece.detected ||
-                piece.cells.isEmpty()
-            ) {
+            if (!piece.detected) {
                 continue
             }
 
-            val shape =
-                normalizeShape(
+            if (piece.cells.isEmpty()) {
+                continue
+            }
+
+            val normalized =
+                normalizePiece(
                     piece.cells
                 )
 
-            if (
-                !isValidShape(shape)
+            val maxRow =
+                normalized.maxOf {
+                    it.first
+                }
+
+            val maxColumn =
+                normalized.maxOf {
+                    it.second
+                }
+
+            for (
+                row in 0 until ROWS
             ) {
-                continue
-            }
 
-            for (row in 0 until ROWS) {
+                for (
+                    column in 0 until COLUMNS
+                ) {
 
-                for (column in 0 until COLUMNS) {
+                    if (
+                        row + maxRow >= ROWS ||
+                        column + maxColumn >= COLUMNS
+                    ) {
+                        continue
+                    }
 
                     if (
                         !canPlace(
                             board,
-                            shape,
+                            normalized,
                             row,
                             column
                         )
@@ -81,68 +88,73 @@ object BlockBlitzAi {
                         continue
                     }
 
-                    legalMoves++
-
                     val simulation =
-                        simulatePlacement(
+                        simulate(
                             board,
-                            shape,
+                            normalized,
                             row,
                             column
                         )
 
                     val score =
                         evaluate(
-                            simulation,
-                            shape
+                            board,
+                            simulation.board,
+                            simulation.linesCleared,
+                            row,
+                            column,
+                            normalized
+                        )
+
+                    val reason =
+                        if (
+                            simulation.linesCleared > 0
+                        ) {
+                            "Clears ${simulation.linesCleared} line"
+                        } else {
+                            "Good space and mobility"
+                        }
+
+                    val move =
+                        BlockBlitzMove(
+                            pieceIndex =
+                                piece.index,
+
+                            row =
+                                row,
+
+                            column =
+                                column,
+
+                            score =
+                                score,
+
+                            linesCleared =
+                                simulation.linesCleared,
+
+                            reason =
+                                reason
                         )
 
                     if (
-                        score > bestScore
+                        bestMove == null ||
+                        move.score >
+                        bestMove!!.score
                     ) {
-
-                        bestScore =
-                            score
-
-                        bestMove =
-                            BlockBlitzMove(
-                                pieceIndex =
-                                    piece.index,
-
-                                row =
-                                    row,
-
-                                column =
-                                    column,
-
-                                score =
-                                    score,
-
-                                reason =
-                                    reason(
-                                        simulation,
-                                        score
-                                    )
-                            )
+                        bestMove = move
                     }
                 }
             }
         }
 
-        Log.d(
-            TAG,
-            "AI -> legalMoves=$legalMoves " +
-                    "best=$bestMove"
-        )
-
         return bestMove
     }
 
     // ============================================================
-    // NORMALIZE
+    // NORMALIZE PIECE
     // ============================================================
 
-    private fun normalizeShape(
+    private fun normalizePiece(
         cells: List<Pair<Int, Int>>
     ): List<Pair<Int, Int>> {
 
@@ -169,78 +181,47 @@ object BlockBlitzAi {
             }
             .distinct()
             .sortedWith(
-                compareBy<Pair<Int, Int>> {
-                    it.first
-                }.thenBy {
-                    it.second
-                }
+                compareBy<Pair<Int, Int>>(
+                    { it.first },
+                    { it.second }
+                )
             )
     }
 
     // ============================================================
-    // VALIDATE SHAPE
-    // ============================================================
-
-    private fun isValidShape(
-        shape: List<Pair<Int, Int>>
-    ): Boolean {
-
-        if (
-            shape.isEmpty() ||
-            shape.size > 25
-        ) {
-            return false
-        }
-
-        for ((row, column) in shape) {
-
-            if (
-                row < 0 ||
-                column < 0 ||
-                row >= ROWS ||
-                column >= COLUMNS
-            ) {
-                return false
-            }
-        }
-
-        return true
-    }
-
-    // ============================================================
-    // LEGAL MOVE
+    // LEGAL PLACEMENT
     // ============================================================
 
     private fun canPlace(
         board: BlockBlitzBoard,
-        shape: List<Pair<Int, Int>>,
-        startRow: Int,
-        startColumn: Int
+        piece: List<Pair<Int, Int>>,
+        row: Int,
+        column: Int
     ): Boolean {
 
-        if (
-            shape.isEmpty()
+        for (
+            cell in piece
         ) {
-            return false
-        }
 
-        for ((dr, dc) in shape) {
+            val targetRow =
+                row + cell.first
 
-            val row =
-                startRow + dr
-
-            val column =
-                startColumn + dc
+            val targetColumn =
+                column + cell.second
 
             if (
-                row !in 0 until board.rows ||
-                column !in 0 until board.columns
+                targetRow !in 0 until ROWS ||
+                targetColumn !in 0 until COLUMNS
             ) {
                 return false
             }
 
             if (
-                board.occupied[row][column]
+                board.occupied[
+                    targetRow
+                ][
+                    targetColumn
+                ]
             ) {
                 return false
             }
@@ -254,360 +235,241 @@ object BlockBlitzAi {
     // ============================================================
 
     private data class Simulation(
-        val board: BlockBlitzBoard,
-        val rowsCleared: Int,
-        val columnsCleared: Int
-    ) {
-
+        val board: Array<BooleanArray>,
         val linesCleared: Int
-            get() =
-                rowsCleared +
-                        columnsCleared
-    }
+    )
 
-    private fun simulatePlacement(
+    private fun simulate(
         board: BlockBlitzBoard,
-        shape: List<Pair<Int, Int>>,
-        startRow: Int,
-        startColumn: Int
+        piece: List<Pair<Int, Int>>,
+        row: Int,
+        column: Int
     ): Simulation {
 
-        val cells =
-            Array(board.rows) {
-                board.occupied[it].clone()
-            }
+        val copy =
+            board.copyBoard()
 
-        for ((dr, dc) in shape) {
+        for (
+            cell in piece
+        ) {
 
-            val row =
-                startRow + dr
-
-            val column =
-                startColumn + dc
-
-            cells[row][column] =
-                true
+            copy[
+                row + cell.first
+            ][
+                column + cell.second
+            ] = true
         }
 
-        var rowsCleared =
+        var lines =
             0
 
-        var columnsCleared =
-            0
+        val rowsToClear =
+            mutableSetOf<Int>()
 
-        // --------------------------------------------------------
-        // ROWS
-        // --------------------------------------------------------
+        val columnsToClear =
+            mutableSetOf<Int>()
 
-        for (row in 0 until board.rows) {
+        for (
+            r in 0 until ROWS
+        ) {
 
-            var full =
+            if (
+                copy[r].all {
+                    it
+                }
+            ) {
+                rowsToClear.add(r)
+            }
+        }
+
+        for (
+            c in 0 until COLUMNS
+        ) {
+
+            var complete =
                 true
 
-            for (column in 0 until board.columns) {
+            for (
+                r in 0 until ROWS
+            ) {
 
-                if (
-                    !cells[row][column]
-                ) {
-                    full = false
+                if (!copy[r][c]) {
+                    complete = false
                     break
                 }
             }
 
-            if (full) {
-
-                rowsCleared++
-
-                for (column in 0 until board.columns) {
-
-                    cells[row][column] =
-                        false
-                }
+            if (complete) {
+                columnsToClear.add(c)
             }
         }
 
-        // --------------------------------------------------------
-        // COLUMNS
-        // --------------------------------------------------------
+        lines =
+            rowsToClear.size +
+                    columnsToClear.size
 
-        for (column in 0 until board.columns) {
+        for (
+            r in rowsToClear
+        ) {
 
-            var full =
-                true
-
-            for (row in 0 until board.rows) {
-
-                if (
-                    !cells[row][column]
-                ) {
-                    full = false
-                    break
-                }
+            for (
+                c in 0 until COLUMNS
+            ) {
+                copy[r][c] = false
             }
+        }
 
-            if (full) {
+        for (
+            c in columnsToClear
+        ) {
 
-                columnsCleared++
-
-                for (row in 0 until board.rows) {
-
-                    cells[row][column] =
-                        false
-                }
+            for (
+                r in 0 until ROWS
+            ) {
+                copy[r][c] = false
             }
         }
 
         return Simulation(
-            board =
-                BlockBlitzBoard(
-                    rows =
-                        board.rows,
-
-                    columns =
-                        board.columns,
-
-                    occupied =
-                        cells
-                ),
-
-            rowsCleared =
-                rowsCleared,
-
-            columnsCleared =
-                columnsCleared
+            board = copy,
+            linesCleared = lines
         )
     }
 
     // ============================================================
-    // SCORE
+    // EVALUATION
     // ============================================================
 
     private fun evaluate(
-        simulation: Simulation,
-        shape: List<Pair<Int, Int>>
-    ): Double {
+        original: BlockBlitzBoard,
+        result: Array<BooleanArray>,
+        linesCleared: Int,
+        row: Int,
+        column: Int,
+        piece: List<Pair<Int, Int>>
+    ): Float {
 
-        val board =
-            simulation.board
+        var score =
+            0f
 
-        val total =
-            board.rows *
-                    board.columns
+        // Line clear is very valuable.
+        score +=
+            linesCleared * 1000f
 
+        // Prefer open space.
         val occupied =
-            board.occupiedCount()
+            result.sumOf { r ->
+                r.count {
+                    it
+                }
+            }
 
         val empty =
-            total -
+            ROWS *
+                    COLUMNS -
                     occupied
 
-        val mobility =
-            mobility(board)
+        score +=
+            empty * 3.0f
 
-        val holes =
-            holes(board)
-
-        val fragmentation =
-            fragmentation(board)
-
-        /*
-         * Clearing a line is much more important
-         * than simply occupying a convenient cell.
-         */
-
-        val lineScore =
-            simulation.linesCleared *
-                    1500.0
-
-        val emptyScore =
-            empty *
-                    2.0
-
-        val mobilityScore =
-            mobility *
-                    4.0
-
-        val holePenalty =
-            holes *
-                    30.0
-
-        val fragmentationPenalty =
-            fragmentation *
-                    4.0
-
-        val piecePenalty =
-            shape.size *
-                    0.25
-
-        return (
-            lineScore +
-                    emptyScore +
-                    mobilityScore -
-                    holePenalty -
-                    fragmentationPenalty -
-                    piecePenalty
+        // Prefer moves away from extreme fragmentation.
+        score -=
+            fragmentationPenalty(
+                result
             )
+
+        // Prefer central but not overly rigid placements.
+        val centerRow =
+            (ROWS - 1) / 2f
+
+        val centerColumn =
+            (COLUMNS - 1) / 2f
+
+        score -=
+            (
+                abs(
+                    row +
+                            piece.averageOf {
+                                it.first
+                            } -
+                            centerRow
+                ) * 2f
+            )
+
+        score -=
+            (
+                abs(
+                    column +
+                            piece.averageOf {
+                                it.second
+                            } -
+                            centerColumn
+                ) * 2f
+            )
+
+        // Reward future mobility.
+        score +=
+            mobilityScore(
+                result
+            )
+
+        // Small penalty for creating isolated holes.
+        score -=
+            holePenalty(
+                result
+            ) * 4f
+
+        return score
     }
 
     // ============================================================
     // MOBILITY
     // ============================================================
 
-    private fun mobility(
-        board: BlockBlitzBoard
-    ): Int {
+    private fun mobilityScore(
+        board: Array<BooleanArray>
+    ): Float {
 
-        var result =
+        var open =
             0
 
-        for (row in 0 until board.rows) {
-
-            for (column in 0 until board.columns) {
-
-                if (
-                    board.occupied[row][column]
-                ) {
-                    continue
-                }
-
-                var neighbors =
-                    0
-
-                if (
-                    row > 0 &&
-                    board.occupied[
-                        row - 1
-                    ][column]
-                ) {
-                    neighbors++
-                }
-
-                if (
-                    row + 1 < board.rows &&
-                    board.occupied[
-                        row + 1
-                    ][column]
-                ) {
-                    neighbors++
-                }
-
-                if (
-                    column > 0 &&
-                    board.occupied[
-                        row
-                    ][column - 1]
-                ) {
-                    neighbors++
-                }
-
-                if (
-                    column + 1 < board.columns &&
-                    board.occupied[
-                        row
-                    ][column + 1]
-                ) {
-                    neighbors++
-                }
-
-                if (
-                    neighbors >= 1
-                ) {
-                    result++
-                }
-            }
-        }
-
-        return result
-    }
-
-    // ============================================================
-    // HOLES
-    // ============================================================
-
-    private fun holes(
-        board: BlockBlitzBoard
-    ): Int {
-
-        var result =
-            0
-
-        for (row in 1 until board.rows - 1) {
+        for (
+            r in 0 until ROWS
+        ) {
 
             for (
-                column in
-                1 until board.columns - 1
+                c in 0 until COLUMNS
             ) {
 
-                if (
-                    board.occupied[row][column]
-                ) {
-                    continue
-                }
-
-                var neighbors =
-                    0
-
-                if (
-                    board.occupied[
-                        row - 1
-                    ][column]
-                ) {
-                    neighbors++
-                }
-
-                if (
-                    board.occupied[
-                        row + 1
-                    ][column]
-                ) {
-                    neighbors++
-                }
-
-                if (
-                    board.occupied[
-                        row
-                    ][column - 1]
-                ) {
-                    neighbors++
-                }
-
-                if (
-                    board.occupied[
-                        row
-                    ][column + 1]
-                ) {
-                    neighbors++
-                }
-
-                if (
-                    neighbors >= 3
-                ) {
-                    result++
+                if (!board[r][c]) {
+                    open++
                 }
             }
         }
 
-        return result
+        return open * 0.8f
     }
 
     // ============================================================
     // FRAGMENTATION
     // ============================================================
 
-    private fun fragmentation(
-        board: BlockBlitzBoard
-    ): Int {
+    private fun fragmentationPenalty(
+        board: Array<BooleanArray>
+    ): Float {
 
-        var result =
-            0
+        var penalty =
+            0f
 
-        for (row in 0 until board.rows) {
+        for (
+            r in 0 until ROWS
+        ) {
 
-            for (column in 0 until board.columns) {
+            for (
+                c in 0 until COLUMNS
+            ) {
 
-                if (
-                    !board.occupied[row][column]
-                ) {
+                if (!board[r][c]) {
                     continue
                 }
 
@@ -615,79 +477,90 @@ object BlockBlitzAi {
                     0
 
                 if (
-                    row > 0 &&
-                    board.occupied[
-                        row - 1
-                    ][column]
+                    r > 0 &&
+                    board[r - 1][c]
                 ) {
                     neighbors++
                 }
 
                 if (
-                    row + 1 < board.rows &&
-                    board.occupied[
-                        row + 1
-                    ][column]
+                    r < ROWS - 1 &&
+                    board[r + 1][c]
                 ) {
                     neighbors++
                 }
 
                 if (
-                    column > 0 &&
-                    board.occupied[
-                        row
-                    ][column - 1]
+                    c > 0 &&
+                    board[r][c - 1]
                 ) {
                     neighbors++
                 }
 
                 if (
-                    column + 1 < board.columns &&
-                    board.occupied[
-                        row
-                    ][column + 1]
+                    c < COLUMNS - 1 &&
+                    board[r][c + 1]
                 ) {
                     neighbors++
                 }
 
-                if (
-                    neighbors == 0
-                ) {
-                    result += 3
-
-                } else if (
-                    neighbors == 1
-                ) {
-                    result++
+                if (neighbors == 0) {
+                    penalty += 5f
                 }
             }
         }
 
-        return result
+        return penalty
     }
 
     // ============================================================
-    // REASON
+    // HOLES
     // ============================================================
 
-    private fun reason(
-        simulation: Simulation,
-        score: Double
-    ): String {
+    private fun holePenalty(
+        board: Array<BooleanArray>
+    ): Float {
 
-        return when {
+        var holes =
+            0
 
-            simulation.linesCleared >= 2 ->
-                "Clears ${simulation.linesCleared} lines"
+        for (
+            r in 1 until ROWS - 1
+        ) {
 
-            simulation.linesCleared == 1 ->
-                "Clears 1 line"
+            for (
+                c in 1 until COLUMNS - 1
+            ) {
 
-            score >= 100 ->
-                "Preserves open space"
+                if (board[r][c]) {
+                    continue
+                }
 
-            else ->
-                "Safe legal placement"
+                var blocked =
+                    0
+
+                if (board[r - 1][c]) {
+                    blocked++
+                }
+
+                if (board[r + 1][c]) {
+                    blocked++
+                }
+
+                if (board[r][c - 1]) {
+                    blocked++
+                }
+
+                if (board[r][c + 1]) {
+                    blocked++
+                }
+
+                if (blocked >= 3) {
+                    holes++
+                }
+            }
         }
+
+        return holes.toFloat()
     }
 }
