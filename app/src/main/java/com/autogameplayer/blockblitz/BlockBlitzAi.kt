@@ -1,127 +1,201 @@
 package com.autogameplayer.blockblitz
 
-import kotlin.math.abs
+import com.autogameplayer.blockengine.ShapeNormalizer
 
-data class BlockBlitzMove(
-    val pieceIndex: Int,
+data class UniversalBlockPiece(
+    val id: Int,
+    val cells: List<Pair<Int, Int>>
+) {
+    val normalizedCells: List<Pair<Int, Int>>
+        get() = ShapeNormalizer.normalize(cells)
+
+    val width: Int
+        get() = ShapeNormalizer.width(cells)
+
+    val height: Int
+        get() = ShapeNormalizer.height(cells)
+}
+
+data class UniversalBoard(
+    val rows: Int = 9,
+    val columns: Int = 9,
+    val occupied: Array<BooleanArray>
+) {
+
+    companion object {
+        fun empty(
+            rows: Int = 9,
+            columns: Int = 9
+        ): UniversalBoard {
+            return UniversalBoard(
+                rows = rows,
+                columns = columns,
+                occupied = Array(rows) {
+                    BooleanArray(columns)
+                }
+            )
+        }
+
+        fun from(
+            source: Array<BooleanArray>
+        ): UniversalBoard {
+            val rows = source.size
+
+            if (rows == 0) {
+                return empty()
+            }
+
+            val columns = source.maxOf { it.size }
+
+            val board = Array(rows) {
+                BooleanArray(columns)
+            }
+
+            for (r in source.indices) {
+                for (c in source[r].indices) {
+                    board[r][c] = source[r][c]
+                }
+            }
+
+            return UniversalBoard(
+                rows = rows,
+                columns = columns,
+                occupied = board
+            )
+        }
+    }
+
+    fun copyBoard(): UniversalBoard {
+        val copied = Array(rows) { r ->
+            BooleanArray(columns) { c ->
+                occupied[r][c]
+            }
+        }
+
+        return UniversalBoard(
+            rows = rows,
+            columns = columns,
+            occupied = copied
+        )
+    }
+
+    fun occupiedCount(): Int {
+        var count = 0
+
+        for (r in 0 until rows) {
+            for (c in 0 until columns) {
+                if (occupied[r][c]) {
+                    count++
+                }
+            }
+        }
+
+        return count
+    }
+}
+
+data class UniversalMove(
+    val pieceId: Int,
     val row: Int,
     val column: Int,
-    val score: Float,
-    val linesCleared: Int,
+    val score: Double,
+    val clearedRows: Int,
+    val clearedColumns: Int,
+    val clearedLines: Int,
     val reason: String
 )
 
 object BlockBlitzAi {
 
-    private const val ROWS = 8
-    private const val COLUMNS = 8
+    private const val CLEAR_LINE_SCORE = 1000.0
+    private const val DOUBLE_CLEAR_BONUS = 350.0
+    private const val TRIPLE_CLEAR_BONUS = 800.0
 
-    // ============================================================
-    // FIND BEST MOVE
-    // ============================================================
-
+    /**
+     * Main AI entry point.
+     *
+     * The AI receives:
+     *   - current board
+     *   - currently available pieces
+     *
+     * and returns the best legal move.
+     */
     fun findBestMove(
-        state: BlockBlitzState
-    ): BlockBlitzMove? {
+        board: UniversalBoard,
+        pieces: List<UniversalBlockPiece>
+    ): UniversalMove? {
 
-        val board =
-            state.board
-                ?: return null
+        if (pieces.isEmpty()) {
+            return null
+        }
 
-        var bestMove: BlockBlitzMove? = null
+        var bestMove: UniversalMove? = null
 
-        for (piece in state.pieces) {
+        for (piece in pieces) {
 
-            if (!piece.detected) {
+            val shape = piece.normalizedCells
+
+            if (shape.isEmpty()) {
                 continue
             }
 
-            if (piece.cells.isEmpty()) {
+            val maxRow = board.rows - piece.height
+            val maxColumn = board.columns - piece.width
+
+            if (maxRow < 0 || maxColumn < 0) {
                 continue
             }
 
-            val normalized =
-                normalizePiece(
-                    piece.cells
-                )
+            for (row in 0..maxRow) {
+                for (column in 0..maxColumn) {
 
-            if (normalized.isEmpty()) {
-                continue
-            }
-
-            val maxRow =
-                normalized.maxOf {
-                    it.first
-                }
-
-            val maxColumn =
-                normalized.maxOf {
-                    it.second
-                }
-
-            for (row in 0 until ROWS) {
-
-                for (column in 0 until COLUMNS) {
-
-                    if (
-                        row + maxRow >= ROWS ||
-                        column + maxColumn >= COLUMNS
-                    ) {
-                        continue
-                    }
-
-                    if (
-                        !canPlace(
-                            board,
-                            normalized,
-                            row,
-                            column
-                        )
-                    ) {
-                        continue
-                    }
-
-                    val simulation =
-                        simulate(
-                            board,
-                            normalized,
-                            row,
-                            column
-                        )
-
-                    val score =
-                        evaluate(
-                            simulation.board,
-                            simulation.linesCleared,
-                            row,
-                            column,
-                            normalized
-                        )
-
-                    val reason =
-                        if (
-                            simulation.linesCleared > 0
-                        ) {
-                            "Clears ${simulation.linesCleared} line"
-                        } else {
-                            "Good space and mobility"
-                        }
-
-                    val move =
-                        BlockBlitzMove(
-                            pieceIndex = piece.index,
+                    if (!canPlace(
+                            board = board,
+                            piece = shape,
                             row = row,
-                            column = column,
-                            score = score,
-                            linesCleared =
-                                simulation.linesCleared,
-                            reason = reason
+                            column = column
                         )
+                    ) {
+                        continue
+                    }
 
-                    if (
-                        bestMove == null ||
-                        move.score >
-                        bestMove!!.score
+                    val simulation = simulateMove(
+                        board = board,
+                        piece = shape,
+                        row = row,
+                        column = column
+                    )
+
+                    val score = evaluate(
+                        before = board,
+                        after = simulation.board,
+                        clearedRows = simulation.clearedRows,
+                        clearedColumns = simulation.clearedColumns
+                    )
+
+                    val totalClears =
+                        simulation.clearedRows +
+                                simulation.clearedColumns
+
+                    val reason = buildReason(
+                        clearedRows = simulation.clearedRows,
+                        clearedColumns = simulation.clearedColumns,
+                        score = score
+                    )
+
+                    val move = UniversalMove(
+                        pieceId = piece.id,
+                        row = row,
+                        column = column,
+                        score = score,
+                        clearedRows = simulation.clearedRows,
+                        clearedColumns = simulation.clearedColumns,
+                        clearedLines = totalClears,
+                        reason = reason
+                    )
+
+                    if (bestMove == null ||
+                        isBetterMove(move, bestMove!!)
                     ) {
                         bestMove = move
                     }
@@ -132,84 +206,30 @@ object BlockBlitzAi {
         return bestMove
     }
 
-    // ============================================================
-    // NORMALIZE PIECE
-    // ============================================================
-
-    private fun normalizePiece(
-        cells: List<Pair<Int, Int>>
-    ): List<Pair<Int, Int>> {
-
-        if (cells.isEmpty()) {
-            return emptyList()
-        }
-
-        var minRow =
-            cells[0].first
-
-        var minColumn =
-            cells[0].second
-
-        for (cell in cells) {
-
-            if (cell.first < minRow) {
-                minRow = cell.first
-            }
-
-            if (cell.second < minColumn) {
-                minColumn = cell.second
-            }
-        }
-
-        return cells
-            .map {
-                Pair(
-                    it.first - minRow,
-                    it.second - minColumn
-                )
-            }
-            .distinct()
-            .sortedWith(
-                compareBy<Pair<Int, Int>>(
-                    { it.first },
-                    { it.second }
-                )
-            )
-    }
-
-    // ============================================================
-    // CAN PLACE
-    // ============================================================
-
-    private fun canPlace(
-        board: BlockBlitzBoard,
+    /**
+     * Checks whether a piece can legally occupy the requested position.
+     */
+    fun canPlace(
+        board: UniversalBoard,
         piece: List<Pair<Int, Int>>,
         row: Int,
         column: Int
     ): Boolean {
 
-        for (cell in piece) {
+        for ((pieceRow, pieceColumn) in piece) {
 
-            val targetRow =
-                row + cell.first
+            val targetRow = row + pieceRow
+            val targetColumn = column + pieceColumn
 
-            val targetColumn =
-                column + cell.second
-
-            if (
-                targetRow !in 0 until ROWS ||
-                targetColumn !in 0 until COLUMNS
-            ) {
+            if (targetRow !in 0 until board.rows) {
                 return false
             }
 
-            if (
-                board.occupied[
-                    targetRow
-                ][
-                    targetColumn
-                ]
-            ) {
+            if (targetColumn !in 0 until board.columns) {
+                return false
+            }
+
+            if (board.occupied[targetRow][targetColumn]) {
                 return false
             }
         }
@@ -217,322 +237,224 @@ object BlockBlitzAi {
         return true
     }
 
-    // ============================================================
-    // SIMULATION
-    // ============================================================
-
-    private data class Simulation(
-        val board: Array<BooleanArray>,
-        val linesCleared: Int
+    private data class SimulationResult(
+        val board: UniversalBoard,
+        val clearedRows: Int,
+        val clearedColumns: Int
     )
 
-    private fun simulate(
-        board: BlockBlitzBoard,
+    /**
+     * Simulates placing one piece and clearing completed rows/columns.
+     */
+    private fun simulateMove(
+        board: UniversalBoard,
         piece: List<Pair<Int, Int>>,
         row: Int,
         column: Int
-    ): Simulation {
+    ): SimulationResult {
 
-        val copy =
-            board.copyBoard()
+        val simulated = board.copyBoard()
 
-        for (cell in piece) {
+        for ((pieceRow, pieceColumn) in piece) {
 
-            copy[
-                row + cell.first
-            ][
-                column + cell.second
-            ] = true
+            val targetRow = row + pieceRow
+            val targetColumn = column + pieceColumn
+
+            if (
+                targetRow in 0 until simulated.rows &&
+                targetColumn in 0 until simulated.columns
+            ) {
+                simulated.occupied[targetRow][targetColumn] = true
+            }
         }
 
-        val rowsToClear =
-            mutableSetOf<Int>()
+        val fullRows = mutableListOf<Int>()
 
-        val columnsToClear =
-            mutableSetOf<Int>()
+        for (r in 0 until simulated.rows) {
 
-        // --------------------------------------------------------
-        // ROWS
-        // --------------------------------------------------------
+            var full = true
 
-        for (r in 0 until ROWS) {
-
-            var complete =
-                true
-
-            for (c in 0 until COLUMNS) {
-
-                if (!copy[r][c]) {
-                    complete = false
+            for (c in 0 until simulated.columns) {
+                if (!simulated.occupied[r][c]) {
+                    full = false
                     break
                 }
             }
 
-            if (complete) {
-                rowsToClear.add(r)
+            if (full) {
+                fullRows.add(r)
             }
         }
 
-        // --------------------------------------------------------
-        // COLUMNS
-        // --------------------------------------------------------
+        val fullColumns = mutableListOf<Int>()
 
-        for (c in 0 until COLUMNS) {
+        for (c in 0 until simulated.columns) {
 
-            var complete =
-                true
+            var full = true
 
-            for (r in 0 until ROWS) {
-
-                if (!copy[r][c]) {
-                    complete = false
+            for (r in 0 until simulated.rows) {
+                if (!simulated.occupied[r][c]) {
+                    full = false
                     break
                 }
             }
 
-            if (complete) {
-                columnsToClear.add(c)
+            if (full) {
+                fullColumns.add(c)
             }
         }
 
-        val linesCleared =
-            rowsToClear.size +
-                    columnsToClear.size
-
-        // --------------------------------------------------------
-        // CLEAR ROWS
-        // --------------------------------------------------------
-
-        for (r in rowsToClear) {
-
-            for (c in 0 until COLUMNS) {
-
-                copy[r][c] = false
+        for (r in fullRows) {
+            for (c in 0 until simulated.columns) {
+                simulated.occupied[r][c] = false
             }
         }
 
-        // --------------------------------------------------------
-        // CLEAR COLUMNS
-        // --------------------------------------------------------
-
-        for (c in columnsToClear) {
-
-            for (r in 0 until ROWS) {
-
-                copy[r][c] = false
+        for (c in fullColumns) {
+            for (r in 0 until simulated.rows) {
+                simulated.occupied[r][c] = false
             }
         }
 
-        return Simulation(
-            board = copy,
-            linesCleared = linesCleared
+        return SimulationResult(
+            board = simulated,
+            clearedRows = fullRows.size,
+            clearedColumns = fullColumns.size
         )
     }
 
-    // ============================================================
-    // EVALUATION
-    // ============================================================
-
+    /**
+     * Human-like heuristic.
+     *
+     * The AI does not simply chase maximum line clears.
+     * It also values open space and future mobility.
+     */
     private fun evaluate(
-        board: Array<BooleanArray>,
-        linesCleared: Int,
-        row: Int,
-        column: Int,
-        piece: List<Pair<Int, Int>>
-    ): Float {
+        before: UniversalBoard,
+        after: UniversalBoard,
+        clearedRows: Int,
+        clearedColumns: Int
+    ): Double {
 
-        var score =
-            0f
+        val clearedLines =
+            clearedRows + clearedColumns
 
-        // --------------------------------------------------------
-        // LINE CLEAR
-        // --------------------------------------------------------
+        val occupiedBefore =
+            before.occupiedCount()
 
-        score +=
-            linesCleared * 1000f
+        val occupiedAfter =
+            after.occupiedCount()
 
-        // --------------------------------------------------------
-        // EMPTY SPACE
-        // --------------------------------------------------------
+        val freeBefore =
+            before.rows * before.columns - occupiedBefore
 
-        var occupied =
-            0
+        val freeAfter =
+            after.rows * after.columns - occupiedAfter
 
-        for (r in 0 until ROWS) {
+        val mobility =
+            countLegalSingleCellMoves(after)
 
-            for (c in 0 until COLUMNS) {
+        var score = 0.0
 
-                if (board[r][c]) {
-                    occupied++
-                }
-            }
+        // Line clearing is strongly rewarded.
+        score += clearedLines * CLEAR_LINE_SCORE
+
+        if (clearedLines == 2) {
+            score += DOUBLE_CLEAR_BONUS
         }
 
-        val totalCells =
-            ROWS * COLUMNS
-
-        val empty =
-            totalCells - occupied
-
-        score +=
-            empty * 3.0f
-
-        // --------------------------------------------------------
-        // FRAGMENTATION
-        // --------------------------------------------------------
-
-        score -=
-            fragmentationPenalty(
-                board
-            )
-
-        // --------------------------------------------------------
-        // CENTER PREFERENCE
-        // --------------------------------------------------------
-
-        val centerRow =
-            (ROWS - 1) / 2f
-
-        val centerColumn =
-            (COLUMNS - 1) / 2f
-
-        var pieceRowSum =
-            0f
-
-        var pieceColumnSum =
-            0f
-
-        for (cell in piece) {
-
-            pieceRowSum +=
-                cell.first.toFloat()
-
-            pieceColumnSum +=
-                cell.second.toFloat()
+        if (clearedLines >= 3) {
+            score += TRIPLE_CLEAR_BONUS
         }
 
-        val pieceCount =
-            piece.size.coerceAtLeast(1)
+        // Preserve empty space.
+        score += freeAfter * 1.5
 
-        val averagePieceRow =
-            pieceRowSum /
-                    pieceCount
+        // Keep future moves available.
+        score += mobility * 8.0
 
-        val averagePieceColumn =
-            pieceColumnSum /
-                    pieceCount
+        // Slightly discourage unnecessary board filling.
+        val addedOccupancy =
+            occupiedAfter - occupiedBefore
 
-        score -=
-            abs(
-                row +
-                        averagePieceRow -
-                        centerRow
-            ) * 2f
+        score -= addedOccupancy * 1.5
 
-        score -=
-            abs(
-                column +
-                        averagePieceColumn -
-                        centerColumn
-            ) * 2f
+        // Avoid creating highly fragmented areas.
+        score -= fragmentationPenalty(after)
 
-        // --------------------------------------------------------
-        // MOBILITY
-        // --------------------------------------------------------
+        // Avoid creating isolated holes.
+        score -= holePenalty(after) * 2.0
 
-        score +=
-            mobilityScore(
-                board
-            )
-
-        // --------------------------------------------------------
-        // HOLES
-        // --------------------------------------------------------
-
-        score -=
-            holePenalty(
-                board
-            ) * 4f
+        // Tiny preference for preserving free space.
+        if (freeAfter >= freeBefore) {
+            score += 10.0
+        }
 
         return score
     }
 
-    // ============================================================
-    // MOBILITY
-    // ============================================================
+    /**
+     * Counts cells where a single block could still be placed.
+     * This is a simple mobility approximation.
+     */
+    private fun countLegalSingleCellMoves(
+        board: UniversalBoard
+    ): Int {
 
-    private fun mobilityScore(
-        board: Array<BooleanArray>
-    ): Float {
+        var count = 0
 
-        var open =
-            0
+        for (r in 0 until board.rows) {
+            for (c in 0 until board.columns) {
 
-        for (r in 0 until ROWS) {
-
-            for (c in 0 until COLUMNS) {
-
-                if (!board[r][c]) {
-                    open++
+                if (!board.occupied[r][c]) {
+                    count++
                 }
             }
         }
 
-        return open * 0.8f
+        return count
     }
 
-    // ============================================================
-    // FRAGMENTATION
-    // ============================================================
-
+    /**
+     * Penalizes disconnected occupied regions.
+     */
     private fun fragmentationPenalty(
-        board: Array<BooleanArray>
-    ): Float {
+        board: UniversalBoard
+    ): Double {
 
-        var penalty =
-            0f
+        var penalty = 0.0
 
-        for (r in 0 until ROWS) {
+        for (r in 0 until board.rows) {
+            for (c in 0 until board.columns) {
 
-            for (c in 0 until COLUMNS) {
-
-                if (!board[r][c]) {
+                if (!board.occupied[r][c]) {
                     continue
                 }
 
-                var neighbors =
-                    0
+                var neighbours = 0
 
-                if (
-                    r > 0 &&
-                    board[r - 1][c]
-                ) {
-                    neighbors++
+                if (r > 0 && board.occupied[r - 1][c]) {
+                    neighbours++
                 }
 
-                if (
-                    r < ROWS - 1 &&
-                    board[r + 1][c]
+                if (r + 1 < board.rows &&
+                    board.occupied[r + 1][c]
                 ) {
-                    neighbors++
+                    neighbours++
                 }
 
-                if (
-                    c > 0 &&
-                    board[r][c - 1]
-                ) {
-                    neighbors++
+                if (c > 0 && board.occupied[r][c - 1]) {
+                    neighbours++
                 }
 
-                if (
-                    c < COLUMNS - 1 &&
-                    board[r][c + 1]
+                if (c + 1 < board.columns &&
+                    board.occupied[r][c + 1]
                 ) {
-                    neighbors++
+                    neighbours++
                 }
 
-                if (neighbors == 0) {
-                    penalty += 5f
+                if (neighbours == 0) {
+                    penalty += 4.0
                 }
             }
         }
@@ -540,50 +462,83 @@ object BlockBlitzAi {
         return penalty
     }
 
-    // ============================================================
-    // HOLE PENALTY
-    // ============================================================
-
+    /**
+     * Detects simple empty pockets surrounded by occupied cells.
+     */
     private fun holePenalty(
-        board: Array<BooleanArray>
-    ): Float {
+        board: UniversalBoard
+    ): Double {
 
-        var holes =
-            0
+        var penalty = 0.0
 
-        for (r in 1 until ROWS - 1) {
+        for (r in 1 until board.rows - 1) {
+            for (c in 1 until board.columns - 1) {
 
-            for (c in 1 until COLUMNS - 1) {
-
-                if (board[r][c]) {
+                if (board.occupied[r][c]) {
                     continue
                 }
 
-                var blocked =
-                    0
+                val surrounded =
+                    board.occupied[r - 1][c] &&
+                    board.occupied[r + 1][c] &&
+                    board.occupied[r][c - 1] &&
+                    board.occupied[r][c + 1]
 
-                if (board[r - 1][c]) {
-                    blocked++
-                }
-
-                if (board[r + 1][c]) {
-                    blocked++
-                }
-
-                if (board[r][c - 1]) {
-                    blocked++
-                }
-
-                if (board[r][c + 1]) {
-                    blocked++
-                }
-
-                if (blocked >= 3) {
-                    holes++
+                if (surrounded) {
+                    penalty += 5.0
                 }
             }
         }
 
-        return holes.toFloat()
+        return penalty
+    }
+
+    private fun isBetterMove(
+        candidate: UniversalMove,
+        current: UniversalMove
+    ): Boolean {
+
+        if (candidate.clearedLines != current.clearedLines) {
+            return candidate.clearedLines > current.clearedLines
+        }
+
+        if (candidate.score != current.score) {
+            return candidate.score > current.score
+        }
+
+        // Stable tie-breaker.
+        if (candidate.pieceId != current.pieceId) {
+            return candidate.pieceId < current.pieceId
+        }
+
+        if (candidate.row != current.row) {
+            return candidate.row < current.row
+        }
+
+        return candidate.column < current.column
+    }
+
+    private fun buildReason(
+        clearedRows: Int,
+        clearedColumns: Int,
+        score: Double
+    ): String {
+
+        val lines =
+            clearedRows + clearedColumns
+
+        return when {
+            lines >= 3 ->
+                "Clears $lines lines and preserves board mobility"
+
+            lines == 2 ->
+                "Clears 2 lines with good board space"
+
+            lines == 1 ->
+                "Clears 1 line"
+
+            else ->
+                "Best legal placement for future mobility"
+        }
     }
 }
