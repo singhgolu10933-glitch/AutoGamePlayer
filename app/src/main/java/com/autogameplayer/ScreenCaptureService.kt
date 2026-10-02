@@ -24,6 +24,8 @@ import android.util.Log
 
 import com.autogameplayer.blockblitz.BlockBlitzAi
 import com.autogameplayer.blockblitz.BlockBlitzVision
+import com.autogameplayer.blockblitz.UniversalBlockPiece
+import com.autogameplayer.blockblitz.UniversalBoard
 
 import java.nio.ByteBuffer
 
@@ -779,8 +781,24 @@ class ScreenCaptureService : Service() {
                     detectedPieces > 0
                 ) {
 
+                    val universalBoard =
+                        UniversalBoard.from(
+                            board.occupied
+                        )
+
+                    val universalPieces =
+                        state.pieces
+                            .filter { it.detected }
+                            .map { piece ->
+                                UniversalBlockPiece(
+                                    id = piece.index,
+                                    cells = piece.cells
+                                )
+                            }
+
                     BlockBlitzAi.findBestMove(
-                        state
+                        board = universalBoard,
+                        pieces = universalPieces
                     )
 
                 } else {
@@ -797,7 +815,7 @@ class ScreenCaptureService : Service() {
 
                 editor.putInt(
                     "best_move_piece",
-                    bestMove.pieceIndex
+                    bestMove.pieceId
                 )
 
                 editor.putInt(
@@ -812,12 +830,12 @@ class ScreenCaptureService : Service() {
 
                 editor.putFloat(
                     "best_move_score",
-                    bestMove.score
+                    bestMove.score.toFloat()
                 )
 
                 editor.putInt(
                     "best_move_lines",
-                    bestMove.linesCleared
+                    bestMove.clearedLines
                 )
 
                 editor.putString(
@@ -828,11 +846,11 @@ class ScreenCaptureService : Service() {
                 Log.d(
                     TAG,
                     "AI BEST MOVE -> " +
-                            "piece=${bestMove.pieceIndex} " +
+                            "piece=${bestMove.pieceId} " +
                             "row=${bestMove.row} " +
                             "column=${bestMove.column} " +
                             "score=${bestMove.score} " +
-                            "lines=${bestMove.linesCleared}"
+                            "lines=${bestMove.clearedLines}"
                 )
 
             } else {
