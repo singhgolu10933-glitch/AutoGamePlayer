@@ -2,7 +2,6 @@ package com.autogameplayer.blockengine
 
 import android.graphics.Bitmap
 import kotlin.math.abs
-import kotlin.math.max
 import kotlin.math.min
 
 /**
@@ -46,9 +45,6 @@ object UniversalPieceDetector {
             return emptyList()
         }
 
-        /*
-         * Find the lower tray.
-         */
         val tray =
             findTray(
                 bitmap,
@@ -59,9 +55,6 @@ object UniversalPieceDetector {
             return emptyList()
         }
 
-        /*
-         * Detect individual colored block regions.
-         */
         val components =
             detectColoredComponents(
                 bitmap,
@@ -72,10 +65,6 @@ object UniversalPieceDetector {
             return emptyList()
         }
 
-        /*
-         * Merge visual fragments belonging to
-         * the same physical block.
-         */
         val mergedBlocks =
             mergeBlockComponents(
                 components
@@ -85,9 +74,6 @@ object UniversalPieceDetector {
             return emptyList()
         }
 
-        /*
-         * Group blocks into individual pieces.
-         */
         val groups =
             groupBlocksIntoPieces(
                 mergedBlocks
@@ -97,10 +83,6 @@ object UniversalPieceDetector {
             return emptyList()
         }
 
-        /*
-         * Convert every group into a normalized
-         * UniversalBlockPiece.
-         */
         val pieces =
             mutableListOf<UniversalBlockPiece>()
 
@@ -137,9 +119,6 @@ object UniversalPieceDetector {
     // DATA CLASSES
     // ============================================================
 
-    /**
-     * Lower tray region.
-     */
     private data class Tray(
         val left: Int,
         val top: Int,
@@ -147,9 +126,6 @@ object UniversalPieceDetector {
         val bottom: Int
     )
 
-    /**
-     * A visual connected component.
-     */
     private data class VisualComponent(
         val left: Int,
         val top: Int,
@@ -167,9 +143,6 @@ object UniversalPieceDetector {
             get() = bottom - top
     }
 
-    /**
-     * A merged physical block.
-     */
     private data class BlockCell(
         val centerX: Float,
         val centerY: Float,
@@ -192,15 +165,10 @@ object UniversalPieceDetector {
         val height =
             bitmap.height
 
-        /*
-         * Pieces normally appear below the board.
-         *
-         * Start just below the detected board.
-         */
         val top =
             (
                 grid.bottom +
-                        max(
+                        maxInt(
                             20,
                             (
                                 grid.cellHeight *
@@ -218,9 +186,6 @@ object UniversalPieceDetector {
                     height - 20
                 )
 
-        /*
-         * Keep enough room for the complete tray.
-         */
         val bottom =
             (
                 height *
@@ -237,9 +202,6 @@ object UniversalPieceDetector {
             return null
         }
 
-        /*
-         * Almost full screen width.
-         */
         val left =
             (
                 width *
@@ -277,13 +239,6 @@ object UniversalPieceDetector {
         tray: Tray
     ): List<VisualComponent> {
 
-        /*
-         * Downsample the scan.
-         *
-         * This is considerably cheaper than checking
-         * every pixel while still being accurate enough
-         * for block-sized objects.
-         */
         val step =
             2
 
@@ -365,9 +320,6 @@ object UniversalPieceDetector {
                     continue
                 }
 
-                /*
-                 * Flood-fill this colored region.
-                 */
                 val component =
                     floodFill(
                         bitmap = bitmap,
@@ -400,9 +352,10 @@ object UniversalPieceDetector {
         return components
     }
 
-    /**
-     * Flood-fill colored pixels.
-     */
+    // ============================================================
+    // FLOOD FILL
+    // ============================================================
+
     private fun floodFill(
         bitmap: Bitmap,
         tray: Tray,
@@ -431,14 +384,17 @@ object UniversalPieceDetector {
             return null
         }
 
+        val capacity =
+            width * height
+
         val queueX =
             IntArray(
-                width * height
+                capacity
             )
 
         val queueY =
             IntArray(
-                width * height
+                capacity
             )
 
         var head =
@@ -479,6 +435,22 @@ object UniversalPieceDetector {
         var count =
             0
 
+        val dx =
+            intArrayOf(
+                1,
+                -1,
+                0,
+                0
+            )
+
+        val dy =
+            intArrayOf(
+                0,
+                0,
+                1,
+                -1
+            )
+
         while (
             head < tail
         ) {
@@ -496,46 +468,27 @@ object UniversalPieceDetector {
             count++
 
             minX =
-                min(
+                minInt(
                     minX,
                     x
                 )
 
             maxX =
-                max(
+                maxInt(
                     maxX,
                     x
                 )
 
             minY =
-                min(
+                minInt(
                     minY,
                     y
                 )
 
             maxY =
-                max(
+                maxInt(
                     maxY,
                     y
-                )
-
-            /*
-             * 4-direction connectivity.
-             */
-            val dx =
-                intArrayOf(
-                    1,
-                    -1,
-                    0,
-                    0
-                )
-
-            val dy =
-                intArrayOf(
-                    0,
-                    0,
-                    1,
-                    -1
                 )
 
             for (
@@ -645,10 +598,6 @@ object UniversalPieceDetector {
                         maxY + 1
                     ) * step
 
-        /*
-         * Ignore extremely large regions.
-         * They are usually tray/background detection.
-         */
         val componentWidth =
             actualRight -
                     actualLeft
@@ -687,10 +636,10 @@ object UniversalPieceDetector {
         )
     }
 
-    /**
-     * Determines whether a pixel looks like
-     * a colored block rather than the dark tray.
-     */
+    // ============================================================
+    // PIXEL CLASSIFICATION
+    // ============================================================
+
     private fun looksLikePiecePixel(
         pixel: Int
     ): Boolean {
@@ -709,18 +658,18 @@ object UniversalPieceDetector {
             pixel and 0xFF
 
         val maximum =
-            max(
+            maxInt(
                 red,
-                max(
+                maxInt(
                     green,
                     blue
                 )
             )
 
         val minimum =
-            min(
+            minInt(
                 red,
-                min(
+                minInt(
                     green,
                     blue
                 )
@@ -735,11 +684,6 @@ object UniversalPieceDetector {
             maximum -
                     minimum
 
-        /*
-         * The tray in the supplied screenshot is
-         * dark blue, while the pieces are strongly
-         * colored.
-         */
         return (
             saturation >= 40 &&
                     brightness >= 40
@@ -751,7 +695,7 @@ object UniversalPieceDetector {
     }
 
     // ============================================================
-    // MERGE VISUAL FRAGMENTS
+    // MERGE VISUAL COMPONENTS
     // ============================================================
 
     private fun mergeBlockComponents(
@@ -764,9 +708,6 @@ object UniversalPieceDetector {
             return emptyList()
         }
 
-        /*
-         * Determine typical visual block size.
-         */
         val widths =
             components
                 .map {
@@ -814,11 +755,6 @@ object UniversalPieceDetector {
                     8f
                 )
 
-        /*
-         * Components that belong to the same
-         * physical cell are merged if their centers
-         * are very close.
-         */
         val result =
             mutableListOf<BlockCell>()
 
@@ -827,9 +763,6 @@ object UniversalPieceDetector {
             components
         ) {
 
-            /*
-             * Ignore tiny noise.
-             */
             if (
                 component.width <
                 blockWidth * 0.30f ||
@@ -839,10 +772,6 @@ object UniversalPieceDetector {
                 continue
             }
 
-            /*
-             * If a previous cell is extremely close,
-             * merge it.
-             */
             var merged =
                 false
 
@@ -888,16 +817,16 @@ object UniversalPieceDetector {
                                     ) / 2f,
 
                             width =
-                                max(
-                                    existing.width,
-                                    component.width
-                                ),
+                                existing.width
+                                    .coerceAtLeast(
+                                        component.width.toFloat()
+                                    ),
 
                             height =
-                                max(
-                                    existing.height,
-                                    component.height
-                                )
+                                existing.height
+                                    .coerceAtLeast(
+                                        component.height.toFloat()
+                                    )
                         )
 
                     merged = true
@@ -951,9 +880,6 @@ object UniversalPieceDetector {
             )
         }
 
-        /*
-         * Estimate spacing between cells.
-         */
         val cellWidth =
             median(
                 blocks.map {
@@ -974,95 +900,136 @@ object UniversalPieceDetector {
                     8f
                 )
 
-        /*
-         * Sort horizontally first.
-         */
         val sorted =
-            blocks.sortedBy {
-                it.centerX
-            }
+            blocks.sortedWith(
+                compareBy<BlockCell> {
+                    it.centerY
+                }.thenBy {
+                    it.centerX
+                }
+            )
 
+        /*
+         * Build connected groups based on
+         * approximately one-cell spacing.
+         */
         val groups =
             mutableListOf<
                     MutableList<BlockCell>
                     >()
 
-        var current =
-            mutableListOf<BlockCell>()
+        val unused =
+            sorted.toMutableList()
 
-        for (
-            block in
-            sorted
+        while (
+            unused.isNotEmpty()
         ) {
 
-            if (
-                current.isEmpty()
-            ) {
+            val seed =
+                unused.removeAt(0)
 
-                current.add(
-                    block
-                )
+            val group =
+                mutableListOf<BlockCell>()
 
-                continue
+            group.add(
+                seed
+            )
+
+            var changed =
+                true
+
+            while (changed) {
+
+                changed =
+                    false
+
+                val iterator =
+                    unused.iterator()
+
+                val toRemove =
+                    mutableListOf<BlockCell>()
+
+                while (
+                    iterator.hasNext()
+                ) {
+
+                    val candidate =
+                        iterator.next()
+
+                    var near =
+                        false
+
+                    for (
+                        existing in
+                        group
+                    ) {
+
+                        val dx =
+                            abs(
+                                candidate.centerX -
+                                        existing.centerX
+                            )
+
+                        val dy =
+                            abs(
+                                candidate.centerY -
+                                        existing.centerY
+                            )
+
+                        val horizontalNeighbour =
+                            dx <=
+                                    cellWidth * 1.65f &&
+                                    dy <=
+                                    cellHeight * 0.65f
+
+                        val verticalNeighbour =
+                            dy <=
+                                    cellHeight * 1.65f &&
+                                    dx <=
+                                    cellWidth * 0.65f
+
+                        if (
+                            horizontalNeighbour ||
+                            verticalNeighbour
+                        ) {
+
+                            near =
+                                true
+
+                            break
+                        }
+                    }
+
+                    if (near) {
+
+                        toRemove.add(
+                            candidate
+                        )
+
+                        changed =
+                            true
+                    }
+                }
+
+                if (
+                    toRemove.isNotEmpty()
+                ) {
+
+                    unused.removeAll(
+                        toRemove.toSet()
+                    )
+
+                    group.addAll(
+                        toRemove
+                    )
+                }
             }
-
-            val previous =
-                current.last()
-
-            val gap =
-                block.centerX -
-                        previous.centerX
-
-            /*
-             * A normal neighboring cell should be
-             * approximately one cell-width away.
-             *
-             * A large gap normally means the next
-             * piece has started.
-             */
-            val samePiece =
-                gap <=
-                        cellWidth * 2.2f
-
-            if (
-                samePiece
-            ) {
-
-                current.add(
-                    block
-                )
-
-            } else {
-
-                groups.add(
-                    current
-                )
-
-                current =
-                    mutableListOf()
-
-                current.add(
-                    block
-                )
-            }
-        }
-
-        if (
-            current.isNotEmpty()
-        ) {
 
             groups.add(
-                current
+                group
             )
         }
 
-        /*
-         * Horizontal grouping alone can sometimes
-         * split a vertically arranged piece.
-         *
-         * Merge groups when their horizontal
-         * distance is small enough.
-         */
         return mergeNearbyGroups(
             groups,
             cellWidth,
@@ -1070,10 +1037,10 @@ object UniversalPieceDetector {
         )
     }
 
-    /**
-     * Merges groups that clearly belong to the
-     * same physical piece.
-     */
+    // ============================================================
+    // MERGE NEARBY GROUPS
+    // ============================================================
+
     private fun mergeNearbyGroups(
         groups: List<List<BlockCell>>,
         cellWidth: Float,
@@ -1160,10 +1127,10 @@ object UniversalPieceDetector {
         return mutable
     }
 
-    /**
-     * Determines whether two groups are close
-     * enough to be part of the same piece.
-     */
+    // ============================================================
+    // GROUP DISTANCE
+    // ============================================================
+
     private fun groupsBelongTogether(
         first: List<BlockCell>,
         second: List<BlockCell>,
@@ -1203,6 +1170,9 @@ object UniversalPieceDetector {
                                 secondBlock.centerY
                     )
 
+                /*
+                 * Manhattan distance.
+                 */
                 val distance =
                     dx + dy
 
@@ -1214,10 +1184,6 @@ object UniversalPieceDetector {
             }
         }
 
-        /*
-         * Adjacent cells can be separated
-         * horizontally or vertically.
-         */
         return minimumDistance <=
                 (
                     cellWidth +
@@ -1226,7 +1192,7 @@ object UniversalPieceDetector {
     }
 
     // ============================================================
-    // CONVERT GROUP TO SHAPE
+    // CONVERT TO UNIVERSAL SHAPE
     // ============================================================
 
     private fun convertGroupToShape(
@@ -1239,15 +1205,16 @@ object UniversalPieceDetector {
             return emptyList()
         }
 
+        /*
+         * Prevent accidental detection of a huge
+         * tray/background region.
+         */
         if (
             group.size > 25
         ) {
             return emptyList()
         }
 
-        /*
-         * Estimate tray-cell spacing.
-         */
         val cellWidth =
             median(
                 group.map {
@@ -1268,6 +1235,10 @@ object UniversalPieceDetector {
                     5f
                 )
 
+        /*
+         * Use the upper-left block as the
+         * approximate origin.
+         */
         val originX =
             group.minOf {
                 it.centerX
@@ -1320,23 +1291,17 @@ object UniversalPieceDetector {
             )
         }
 
-        /*
-         * Remove duplicates.
-         */
         val distinct =
             rawCells
                 .distinct()
 
-        /*
-         * Normalize again.
-         */
         return normalizeShape(
             distinct
         )
     }
 
     // ============================================================
-    // NORMALIZATION
+    // NORMALIZE SHAPE
     // ============================================================
 
     private fun normalizeShape(
@@ -1380,6 +1345,38 @@ object UniversalPieceDetector {
                     it.column
                 }
             )
+    }
+
+    // ============================================================
+    // SAFE INTEGER HELPERS
+    // ============================================================
+
+    private fun maxInt(
+        a: Int,
+        b: Int
+    ): Int {
+
+        return if (
+            a > b
+        ) {
+            a
+        } else {
+            b
+        }
+    }
+
+    private fun minInt(
+        a: Int,
+        b: Int
+    ): Int {
+
+        return if (
+            a < b
+        ) {
+            a
+        } else {
+            b
+        }
     }
 
     // ============================================================
