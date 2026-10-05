@@ -22,10 +22,8 @@ import android.os.IBinder
 import android.util.DisplayMetrics
 import android.util.Log
 
-import com.autogameplayer.blockblitz.BlockBlitzAi
-import com.autogameplayer.blockblitz.BlockBlitzVision
-import com.autogameplayer.blockblitz.UniversalBlockPiece
-import com.autogameplayer.blockblitz.UniversalBoard
+import com.autogameplayer.blockengine.UniversalVision
+import com.autogameplayer.blockengine.UniversalBlockSolver
 
 import java.nio.ByteBuffer
 
@@ -42,11 +40,7 @@ class ScreenCaptureService : Service() {
         private const val NOTIFICATION_ID =
             2001
 
-        private var instance:
-                ScreenCaptureService? = null
-
-        private var capturing =
-            false
+        private var capturing = false
 
         fun isCapturing(): Boolean {
             return capturing
@@ -57,23 +51,21 @@ class ScreenCaptureService : Service() {
             resultCode: Int,
             data: Intent
         ) {
+            val intent = Intent(
+                context,
+                ScreenCaptureService::class.java
+            ).apply {
 
-            val intent =
-                Intent(
-                    context,
-                    ScreenCaptureService::class.java
-                ).apply {
+                putExtra(
+                    "result_code",
+                    resultCode
+                )
 
-                    putExtra(
-                        "result_code",
-                        resultCode
-                    )
-
-                    putExtra(
-                        "result_data",
-                        data
-                    )
-                }
+                putExtra(
+                    "result_data",
+                    data
+                )
+            }
 
             if (
                 Build.VERSION.SDK_INT >=
@@ -95,7 +87,6 @@ class ScreenCaptureService : Service() {
         fun stopCapture(
             context: Context
         ) {
-
             context.stopService(
                 Intent(
                     context,
@@ -110,45 +101,38 @@ class ScreenCaptureService : Service() {
     // ============================================================
 
     private var mediaProjection:
-            MediaProjection? = null
+        MediaProjection? = null
 
     private var virtualDisplay:
-            VirtualDisplay? = null
+        VirtualDisplay? = null
 
     private var imageReader:
-            ImageReader? = null
+        ImageReader? = null
 
     // ============================================================
     // BACKGROUND THREAD
     // ============================================================
 
     private var captureThread:
-            HandlerThread? = null
+        HandlerThread? = null
 
     private var captureHandler:
-            Handler? = null
+        Handler? = null
 
     // ============================================================
     // FRAME CONTROL
     // ============================================================
 
-    private var lastFrameTime =
-        0L
+    private var lastFrameTime = 0L
 
-    /*
-     * Vision runs approximately every 250 ms.
-     * This is about 4 FPS.
-     */
-    private  val FRAME_INTERVAL_MS =
-        250L
+    private val frameIntervalMs = 250L
 
     // ============================================================
     // MEDIA PROJECTION CALLBACK
     // ============================================================
 
     private val mediaProjectionCallback =
-        object :
-            MediaProjection.Callback() {
+        object : MediaProjection.Callback() {
 
             override fun onStop() {
 
@@ -160,11 +144,9 @@ class ScreenCaptureService : Service() {
                 capturing = false
 
                 virtualDisplay?.release()
-
                 virtualDisplay = null
 
                 imageReader?.close()
-
                 imageReader = null
 
                 mediaProjection = null
@@ -183,8 +165,6 @@ class ScreenCaptureService : Service() {
 
         super.onCreate()
 
-        instance = this
-
         createNotificationChannel()
 
         captureThread =
@@ -195,9 +175,7 @@ class ScreenCaptureService : Service() {
                 it.start()
 
                 captureHandler =
-                    Handler(
-                        it.looper
-                    )
+                    Handler(it.looper)
             }
 
         Log.d(
@@ -407,9 +385,7 @@ class ScreenCaptureService : Service() {
         // ========================================================
 
         val observationWidth =
-            width.coerceAtMost(
-                1280
-            )
+            width.coerceAtMost(1280)
 
         val scale =
             observationWidth.toFloat() /
@@ -417,9 +393,8 @@ class ScreenCaptureService : Service() {
 
         val observationHeight =
             (
-                height *
-                        scale
-                )
+                height * scale
+            )
                 .toInt()
                 .coerceAtLeast(1)
 
@@ -474,9 +449,8 @@ class ScreenCaptureService : Service() {
 
         Log.d(
             TAG,
-            "Screen observation started: " +
-                    "${observationWidth}x" +
-                    "$observationHeight"
+            "Universal screen observation started: " +
+                "${observationWidth}x$observationHeight"
         )
     }
 
@@ -493,14 +467,13 @@ class ScreenCaptureService : Service() {
 
         if (
             now - lastFrameTime <
-            FRAME_INTERVAL_MS
+            frameIntervalMs
         ) {
 
             return
         }
 
-        lastFrameTime =
-            now
+        lastFrameTime = now
 
         val image =
             try {
@@ -566,8 +539,8 @@ class ScreenCaptureService : Service() {
                 ?: return null
 
         val buffer:
-                ByteBuffer =
-            plane.buffer
+            ByteBuffer =
+                plane.buffer
 
         val pixelStride =
             plane.pixelStride
@@ -644,8 +617,26 @@ class ScreenCaptureService : Service() {
     }
 
     // ============================================================
-    // VISION + AI
+    // UNIVERSAL VISION + AI
     // ============================================================
+
+    /*
+     * Universal pipeline:
+     *
+     * Screenshot
+     *     ↓
+     * UniversalVision
+     *     ↓
+     * UniversalBlockState
+     *     ↓
+     * UniversalBlockSolver
+     *     ↓
+     * Best Move
+     *
+     * No BlockBlitzVision.
+     * No BlockBlitzAi.
+     * No game-specific coordinates.
+     */
 
     private fun analyzeFrame(
         bitmap: Bitmap
@@ -654,32 +645,30 @@ class ScreenCaptureService : Service() {
         try {
 
             // ====================================================
-            // BLOCK BLITZ VISION
+            // UNIVERSAL VISION
             // ====================================================
 
             val state =
-                BlockBlitzVision.analyze(
+                UniversalVision.analyze(
                     bitmap
                 )
 
             val board =
                 state.board
 
+            val pieces =
+                state.pieces
+
             val occupied =
                 board
                     ?.occupiedCount()
                     ?: -1
 
-            val detectedPieces =
-                state.pieces.count {
-                    it.detected
-                }
-
             val confidence =
                 (
                     state.confidence *
                             100f
-                    )
+                )
                     .toInt()
                     .coerceIn(
                         0,
@@ -687,7 +676,7 @@ class ScreenCaptureService : Service() {
                     )
 
             // ====================================================
-            // SAVE BASIC VISION STATUS
+            // PREFERENCES
             // ====================================================
 
             val prefs =
@@ -699,9 +688,18 @@ class ScreenCaptureService : Service() {
             val editor =
                 prefs.edit()
 
+            // ====================================================
+            // BASIC VISION STATUS
+            // ====================================================
+
             editor.putBoolean(
                 "available",
                 true
+            )
+
+            editor.putBoolean(
+                "board_detected",
+                board != null
             )
 
             editor.putInt(
@@ -711,7 +709,7 @@ class ScreenCaptureService : Service() {
 
             editor.putInt(
                 "pieces_detected",
-                detectedPieces
+                pieces.size
             )
 
             editor.putInt(
@@ -719,56 +717,55 @@ class ScreenCaptureService : Service() {
                 confidence
             )
 
-            editor.putBoolean(
-                "board_detected",
-                board != null
+            editor.putInt(
+                "board_rows",
+                board?.rows ?: 0
+            )
+
+            editor.putInt(
+                "board_columns",
+                board?.columns ?: 0
             )
 
             // ====================================================
-            // SAVE DETECTED PIECES
+            // SAVE PIECES
             // ====================================================
 
             for (
-                piece in state.pieces
+                piece in pieces
             ) {
 
-                val index =
-                    piece.index
+                val shape =
+                    piece.normalizedCells
+                        .joinToString(";") {
+
+                            "${it.row},${it.column}"
+                        }
 
                 editor.putBoolean(
-                    "piece_${index}_detected",
-                    piece.detected
+                    "piece_${piece.id}_detected",
+                    true
                 )
 
-                val shape =
-                    piece.cells.joinToString(
-                        separator = ";"
-                    ) {
-
-                        "${it.first},${it.second}"
-                    }
-
                 editor.putString(
-                    "piece_${index}_shape",
+                    "piece_${piece.id}_shape",
                     shape
                 )
 
                 editor.putInt(
-                    "piece_${index}_cell_count",
+                    "piece_${piece.id}_cell_count",
                     piece.cells.size
                 )
             }
 
             // ====================================================
-            // AI DECISION
+            // UNIVERSAL AI
             // ====================================================
 
             /*
-             * IMPORTANT:
-             *
              * AI only calculates the move.
              *
-             * It does NOT touch the game.
+             * It does NOT interact with the game yet.
              *
              * No tap.
              * No swipe.
@@ -778,35 +775,27 @@ class ScreenCaptureService : Service() {
             val bestMove =
                 if (
                     board != null &&
-                    detectedPieces > 0
+                    pieces.isNotEmpty()
                 ) {
 
-                    val universalBoard =
-                        UniversalBoard.from(
-                            board.occupied
+                    UniversalBlockSolver
+                        .findBestMove(
+                            board = board,
+                            pieces = pieces
                         )
-
-                    val universalPieces =
-                        state.pieces
-                            .filter { it.detected }
-                            .map { piece ->
-                                UniversalBlockPiece(
-                                    id = piece.index,
-                                    cells = piece.cells
-                                )
-                            }
-
-                    BlockBlitzAi.findBestMove(
-                        board = universalBoard,
-                        pieces = universalPieces
-                    )
 
                 } else {
 
                     null
                 }
 
-            if (bestMove != null) {
+            // ====================================================
+            // BEST MOVE FOUND
+            // ====================================================
+
+            if (
+                bestMove != null
+            ) {
 
                 editor.putBoolean(
                     "best_move_available",
@@ -845,15 +834,19 @@ class ScreenCaptureService : Service() {
 
                 Log.d(
                     TAG,
-                    "AI BEST MOVE -> " +
-                            "piece=${bestMove.pieceId} " +
-                            "row=${bestMove.row} " +
-                            "column=${bestMove.column} " +
-                            "score=${bestMove.score} " +
-                            "lines=${bestMove.clearedLines}"
+                    "UNIVERSAL BEST MOVE -> " +
+                        "piece=${bestMove.pieceId}, " +
+                        "row=${bestMove.row}, " +
+                        "column=${bestMove.column}, " +
+                        "score=${bestMove.score}, " +
+                        "lines=${bestMove.clearedLines}"
                 )
 
             } else {
+
+                // =================================================
+                // NO MOVE
+                // =================================================
 
                 editor.putBoolean(
                     "best_move_available",
@@ -887,23 +880,34 @@ class ScreenCaptureService : Service() {
 
                 editor.putString(
                     "best_move_reason",
-                    "No legal placement detected"
-                )
 
-                Log.d(
-                    TAG,
-                    "AI -> No legal move"
+                    if (
+                        board == null
+                    ) {
+
+                        "Universal board not detected"
+
+                    } else if (
+                        pieces.isEmpty()
+                    ) {
+
+                        "Universal pieces not detected"
+
+                    } else {
+
+                        "No legal placement"
+                    }
                 )
             }
 
             // ====================================================
-            // AUTOMATIC ACTION
+            // AUTOMATION SAFETY
             // ====================================================
 
             /*
-             * Deliberately OFF.
+             * Automatic interaction is deliberately OFF.
              *
-             * We are testing:
+             * First we verify:
              *
              * Screen
              *   ↓
@@ -911,16 +915,21 @@ class ScreenCaptureService : Service() {
              *   ↓
              * Pieces
              *   ↓
-             * AI
+             * Solver
              *   ↓
              * Best Move
              *
-             * Only after this is stable will
-             * Accessibility drag be connected.
+             * Only after this works reliably will the
+             * Accessibility drag/tap layer be connected.
              */
 
             editor.putBoolean(
                 "automatic_action",
+                false
+            )
+
+            editor.putBoolean(
+                "extreme_automation",
                 false
             )
 
@@ -929,27 +938,28 @@ class ScreenCaptureService : Service() {
                 "Normal / Human-like"
             )
 
-            editor.putBoolean(
-                "extreme_automation",
-                false
-            )
-
             editor.apply()
+
+            // ====================================================
+            // LOG
+            // ====================================================
 
             Log.d(
                 TAG,
-                "VISION RESULT -> " +
-                        "board=${board != null}, " +
-                        "occupied=$occupied, " +
-                        "pieces=$detectedPieces/3, " +
-                        "confidence=$confidence%"
+                "UNIVERSAL RESULT -> " +
+                    "board=${board != null}, " +
+                    "grid=${board?.rows ?: 0}x" +
+                    "${board?.columns ?: 0}, " +
+                    "occupied=$occupied, " +
+                    "pieces=${pieces.size}, " +
+                    "confidence=$confidence%"
             )
 
         } catch (e: Exception) {
 
             Log.e(
                 TAG,
-                "Vision/AI analysis failed",
+                "Universal vision/AI failed",
                 e
             )
 
@@ -963,12 +973,16 @@ class ScreenCaptureService : Service() {
                     false
                 )
                 .putBoolean(
+                    "board_detected",
+                    false
+                )
+                .putBoolean(
                     "best_move_available",
                     false
                 )
                 .putString(
                     "best_move_reason",
-                    "Vision error"
+                    "Universal vision error"
                 )
                 .apply()
         }
@@ -1010,7 +1024,7 @@ class ScreenCaptureService : Service() {
     // ============================================================
 
     private fun createNotification():
-            Notification {
+        Notification {
 
         return Notification.Builder(
             this,
@@ -1020,7 +1034,7 @@ class ScreenCaptureService : Service() {
                 "Auto Game Player"
             )
             .setContentText(
-                "Screen observation is active"
+                "Universal screen observation is active"
             )
             .setSmallIcon(
                 android.R.drawable.ic_menu_view
@@ -1079,7 +1093,9 @@ class ScreenCaptureService : Service() {
         val projection =
             mediaProjection
 
-        if (projection != null) {
+        if (
+            projection != null
+        ) {
 
             try {
 
@@ -1099,7 +1115,9 @@ class ScreenCaptureService : Service() {
 
         imageReader = null
 
-        if (projection != null) {
+        if (
+            projection != null
+        ) {
 
             try {
 
@@ -1128,14 +1146,9 @@ class ScreenCaptureService : Service() {
 
         captureHandler = null
 
-        if (instance === this) {
-
-            instance = null
-        }
-
         Log.d(
             TAG,
-            "Screen capture service stopped"
+            "Universal screen capture service stopped"
         )
 
         super.onDestroy()
