@@ -6,51 +6,71 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Universal grid detector.
+ * Universal grid detector for block-puzzle games.
  *
- * It does not contain coordinates for Block Blitz
- * or any other individual game.
+ * Goals:
+ * 1. Detect different board sizes.
+ * 2. Work without game-specific coordinates.
+ * 3. Keep CPU usage low.
+ * 4. Prefer large, regular rectangular grids.
+ * 5. Provide accurate cell geometry for the next vision stage.
  *
- * It tries to discover a rectangular block-puzzle
- * board from the current screenshot.
+ * This detector does NOT interact with the game.
  */
+data class DetectedGrid(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+    val rows: Int,
+    val columns: Int,
+    val cellWidth: Float,
+    val cellHeight: Float,
+    val score: Float
+)
+
 object UniversalGridDetector {
 
-    /**
-     * Detected board geometry.
+    // ============================================================
+    // CONFIGURATION
+    // ============================================================
+
+    private const val MIN_ROWS = 6
+    private const val MAX_ROWS = 12
+
+    private const val MIN_COLUMNS = 6
+    private const val MAX_COLUMNS = 12
+
+    /*
+     * Scan at reduced resolution.
      *
-     * Coordinates are pixel coordinates.
+     * This is important for speed.
+     * We do not inspect every pixel of a 1080p/1440p screen.
      */
-    data class DetectedGrid(
-        val rows: Int,
-        val columns: Int,
-        val left: Int,
-        val top: Int,
-        val right: Int,
-        val bottom: Int,
-        val cellWidth: Float,
-        val cellHeight: Float,
-        val confidence: Float
-    ) {
+    private const val SAMPLE_STEP = 8
 
-        val width: Int
-            get() = right - left
-
-        val height: Int
-            get() = bottom - top
-
-        val centerX: Float
-            get() =
-                (left + right) / 2f
-
-        val centerY: Float
-            get() =
-                (top + bottom) / 2f
-    }
-
-    /**
-     * Detects the most likely block-puzzle grid.
+    /*
+     * Block games normally keep the board around the
+     * central portion of the screen.
      */
+    private const val SEARCH_LEFT = 0.05f
+    private const val SEARCH_RIGHT = 0.95f
+    private const val SEARCH_TOP = 0.12f
+    private const val SEARCH_BOTTOM = 0.76f
+
+    /*
+     * We want the board to be reasonably large.
+     */
+    private const val MIN_BOARD_WIDTH_RATIO = 0.35f
+    private const val MAX_BOARD_WIDTH_RATIO = 0.90f
+
+    private const val MIN_BOARD_HEIGHT_RATIO = 0.25f
+    private const val MAX_BOARD_HEIGHT_RATIO = 0.70f
+
+    // ============================================================
+    // PUBLIC API
+    // ============================================================
+
     fun detect(
         bitmap: Bitmap
     ): DetectedGrid? {
@@ -62,766 +82,497 @@ object UniversalGridDetector {
             return null
         }
 
-        val candidates =
-            generateCandidates(bitmap)
+        val width = bitmap.width
+        val height = bitmap.height
 
-        if (candidates.isEmpty()) {
-            return null
-        }
-
-        var best:
-                DetectedGrid? = null
-
-        var bestScore =
-            Float.NEGATIVE_INFINITY
-
-        for (candidate in candidates) {
-
-            val score =
-                scoreCandidate(
-                    bitmap,
-                    candidate
-                )
-
-            if (
-                score > bestScore
-            ) {
-
-                bestScore = score
-                best = candidate
-            }
-        }
-
-        if (best == null) {
-            return null
-        }
-
-        val finalConfidence =
-            normalizeConfidence(
-                bestScore
+        /*
+         * Fast path:
+         *
+         * First test the common square-board layouts.
+         * This avoids expensive candidate generation in many
+         * normal block games.
+         */
+        val fastCandidate =
+            detectFastSquareBoard(
+                bitmap = bitmap,
+                width = width,
+                height = height
             )
 
-        return best.copy(
-            confidence = finalConfidence
+        if (fastCandidate != null) {
+            return fastCandidate
+        }
+
+        /*
+         * Fallback:
+         *
+         * Try several grid sizes.
+         */
+        return detectGeneric(
+            bitmap = bitmap,
+            width = width,
+            height = height
         )
     }
 
-    /**
-     * Generates possible grids.
-     *
-     * Typical block puzzle boards are square,
-     * but this detector also allows rectangular
-     * boards.
-     */
-    private fun generateCandidates(
-        bitmap: Bitmap
-    ): List<DetectedGrid> {
+    // ============================================================
+    // FAST PATH
+    // ============================================================
 
-        val width =
-            bitmap.width
-
-        val height =
-            bitmap.height
-
-        val result =
-            mutableListOf<DetectedGrid>()
+    private fun detectFastSquareBoard(
+        bitmap: Bitmap,
+        width: Int,
+        height: Int
+    ): DetectedGrid? {
 
         /*
-         * Ignore a small amount of the top
-         * because many games have:
+         * Most block puzzle games use a square board.
          *
-         * - title
-         * - score
-         * - coins
-         * - buttons
-         */
-        val searchTop =
-            (height * 0.08f)
-                .toInt()
-                .coerceIn(
-                    0,
-                    height - 1
-                )
-
-        /*
-         * Leave the lower section for pieces.
-         */
-        val searchBottom =
-            (height * 0.76f)
-                .toInt()
-                .coerceIn(
-                    searchTop + 1,
-                    height
-                )
-
-        /*
-         * Supported grid sizes.
-         *
-         * This covers common block-puzzle
-         * layouts such as:
-         *
+         * Common sizes:
          * 8x8
          * 9x9
          * 10x10
-         * 10x8
-         * 12x12
+         *
+         * Try these first.
          */
-        val sizes =
-            listOf(
-                6 to 6,
-                7 to 7,
-                8 to 8,
-                9 to 9,
-                10 to 10,
-                11 to 11,
-                12 to 12,
-                8 to 10,
-                10 to 8,
-                8 to 9,
-                9 to 8,
-                9 to 10,
-                10 to 9,
-                10 to 12,
-                12 to 10
-            )
+        val sizes = intArrayOf(
+            8,
+            9,
+            10
+        )
 
-        for ((rows, columns) in sizes) {
+        var best: DetectedGrid? = null
 
-            /*
-             * Board should normally occupy
-             * a substantial portion of screen width.
-             */
-            val minimumBoardWidth =
-                width * 0.45f
+        for (size in sizes) {
 
-            val maximumBoardWidth =
-                width * 0.94f
+            val candidate =
+                findBestCandidateForSize(
+                    bitmap = bitmap,
+                    width = width,
+                    height = height,
+                    rows = size,
+                    columns = size
+                )
 
-            var boardWidth =
-                width * 0.72f
-
-            /*
-             * Try several board widths.
-             */
-            val widthSteps =
-                7
-
-            for (
-                step in
-                0 until widthSteps
-            ) {
-
-                val fraction =
-                    0.50f +
-                            step * 0.07f
-
-                boardWidth =
-                    width * fraction
+            if (candidate != null) {
 
                 if (
-                    boardWidth <
-                    minimumBoardWidth ||
-                    boardWidth >
-                    maximumBoardWidth
+                    best == null ||
+                    candidate.score > best.score
                 ) {
-                    continue
+                    best = candidate
                 }
+            }
+        }
 
-                val cellWidth =
-                    boardWidth /
-                            columns.toFloat()
+        /*
+         * Only accept a strong candidate.
+         */
+        if (
+            best != null &&
+            best.score >= 0.58f
+        ) {
+            return best
+        }
 
-                val boardHeight =
-                    cellWidth *
+        return null
+    }
+
+    // ============================================================
+    // GENERIC DETECTION
+    // ============================================================
+
+    private fun detectGeneric(
+        bitmap: Bitmap,
+        width: Int,
+        height: Int
+    ): DetectedGrid? {
+
+        var best: DetectedGrid? = null
+
+        /*
+         * We deliberately skip every second size during the first
+         * pass where possible.
+         *
+         * This keeps detection fast.
+         */
+        for (rows in MIN_ROWS..MAX_ROWS) {
+
+            for (columns in MIN_COLUMNS..MAX_COLUMNS) {
+
+                /*
+                 * Avoid obviously unusual aspect ratios.
+                 *
+                 * Most block puzzle boards are close to square.
+                 */
+                val ratio =
+                    columns.toFloat() /
                             rows.toFloat()
 
                 if (
-                    boardHeight <
-                    height * 0.25f
+                    ratio < 0.65f ||
+                    ratio > 1.55f
                 ) {
+                    continue
+                }
+
+                val candidate =
+                    findBestCandidateForSize(
+                        bitmap = bitmap,
+                        width = width,
+                        height = height,
+                        rows = rows,
+                        columns = columns
+                    )
+
+                if (candidate == null) {
                     continue
                 }
 
                 if (
-                    boardHeight >
-                    height * 0.62f
+                    best == null ||
+                    candidate.score > best.score
                 ) {
-                    continue
-                }
-
-                /*
-                 * Center the board horizontally.
-                 */
-                val left =
-                    (
-                        (width -
-                                boardWidth) /
-                                2f
-                        )
-                        .toInt()
-
-                val right =
-                    (
-                        left +
-                                boardWidth
-                    )
-                        .toInt()
-
-                /*
-                 * Try multiple vertical positions.
-                 */
-                val verticalPositions =
-                    listOf(
-                        0.16f,
-                        0.19f,
-                        0.22f,
-                        0.25f,
-                        0.28f,
-                        0.31f,
-                        0.34f
-                    )
-
-                for (
-                    topFraction in
-                    verticalPositions
-                ) {
-
-                    val top =
-                        (
-                            height *
-                                    topFraction
-                            )
-                            .toInt()
-
-                    val bottom =
-                        (
-                            top +
-                                    boardHeight
-                            )
-                            .toInt()
-
-                    if (
-                        top <
-                        searchTop
-                    ) {
-                        continue
-                    }
-
-                    if (
-                        bottom >
-                        searchBottom
-                    ) {
-                        continue
-                    }
-
-                    if (
-                        right <= left ||
-                        bottom <= top
-                    ) {
-                        continue
-                    }
-
-                    result.add(
-                        DetectedGrid(
-                            rows = rows,
-                            columns = columns,
-                            left = left,
-                            top = top,
-                            right = right,
-                            bottom = bottom,
-                            cellWidth =
-                                boardWidth /
-                                        columns,
-                            cellHeight =
-                                boardHeight /
-                                        rows,
-                            confidence = 0f
-                        )
-                    )
+                    best = candidate
                 }
             }
         }
 
-        return result
+        return best
     }
 
-    /**
-     * Scores a possible grid.
-     *
-     * We look for repeated visual differences
-     * between neighboring cells.
-     */
-    private fun scoreCandidate(
+    // ============================================================
+    // SIZE SEARCH
+    // ============================================================
+
+    private fun findBestCandidateForSize(
         bitmap: Bitmap,
-        grid: DetectedGrid
-    ): Float {
+        width: Int,
+        height: Int,
+        rows: Int,
+        columns: Int
+    ): DetectedGrid? {
 
-        val horizontalScore =
-            horizontalBoundaryScore(
-                bitmap,
-                grid
-            )
+        val searchLeft =
+            (width * SEARCH_LEFT)
+                .toInt()
+                .coerceAtLeast(0)
 
-        val verticalScore =
-            verticalBoundaryScore(
-                bitmap,
-                grid
-            )
+        val searchRight =
+            (width * SEARCH_RIGHT)
+                .toInt()
+                .coerceAtMost(width)
 
-        val contrastScore =
-            cellContrastScore(
-                bitmap,
-                grid
-            )
+        val searchTop =
+            (height * SEARCH_TOP)
+                .toInt()
+                .coerceAtLeast(0)
 
-        val shapeScore =
-            shapeScore(grid)
-
-        val screenScore =
-            screenPositionScore(
-                bitmap,
-                grid
-            )
-
-        /*
-         * Weighted combination.
-         */
-        return (
-            horizontalScore * 0.30f +
-                    verticalScore * 0.30f +
-                    contrastScore * 0.25f +
-                    shapeScore * 0.10f +
-                    screenScore * 0.05f
-            )
-    }
-
-    /**
-     * Measures horizontal cell-to-cell changes.
-     */
-    private fun horizontalBoundaryScore(
-        bitmap: Bitmap,
-        grid: DetectedGrid
-    ): Float {
-
-        var total =
-            0f
-
-        var samples =
-            0
-
-        val rowsToCheck =
-            min(
-                grid.rows,
-                12
-            )
-
-        val columnsToCheck =
-            min(
-                grid.columns - 1,
-                11
-            )
-
-        for (
-            row in
-            0 until rowsToCheck
-        ) {
-
-            for (
-                column in
-                0 until columnsToCheck
-            ) {
-
-                val first =
-                    sampleCellBrightness(
-                        bitmap,
-                        grid,
-                        row,
-                        column
-                    )
-
-                val second =
-                    sampleCellBrightness(
-                        bitmap,
-                        grid,
-                        row,
-                        column + 1
-                    )
-
-                total +=
-                    abs(
-                        first - second
-                    )
-
-                samples++
-            }
-        }
-
-        if (samples == 0) {
-            return 0f
-        }
-
-        return (
-            total /
-                    samples
-        )
-            .coerceIn(
-                0f,
-                255f
-            )
-    }
-
-    /**
-     * Measures vertical cell-to-cell changes.
-     */
-    private fun verticalBoundaryScore(
-        bitmap: Bitmap,
-        grid: DetectedGrid
-    ): Float {
-
-        var total =
-            0f
-
-        var samples =
-            0
-
-        val rowsToCheck =
-            min(
-                grid.rows - 1,
-                11
-            )
-
-        val columnsToCheck =
-            min(
-                grid.columns,
-                12
-            )
-
-        for (
-            row in
-            0 until rowsToCheck
-        ) {
-
-            for (
-                column in
-                0 until columnsToCheck
-            ) {
-
-                val first =
-                    sampleCellBrightness(
-                        bitmap,
-                        grid,
-                        row,
-                        column
-                    )
-
-                val second =
-                    sampleCellBrightness(
-                        bitmap,
-                        grid,
-                        row + 1,
-                        column
-                    )
-
-                total +=
-                    abs(
-                        first - second
-                    )
-
-                samples++
-            }
-        }
-
-        if (samples == 0) {
-            return 0f
-        }
-
-        return (
-            total /
-                    samples
-        )
-            .coerceIn(
-                0f,
-                255f
-            )
-    }
-
-    /**
-     * Measures contrast variation across cells.
-     */
-    private fun cellContrastScore(
-        bitmap: Bitmap,
-        grid: DetectedGrid
-    ): Float {
-
-        var minimum =
-            Float.MAX_VALUE
-
-        var maximum =
-            Float.MIN_VALUE
-
-        var total =
-            0f
-
-        var samples =
-            0
-
-        val rowsToCheck =
-            min(
-                grid.rows,
-                12
-            )
-
-        val columnsToCheck =
-            min(
-                grid.columns,
-                12
-            )
-
-        for (
-            row in
-            0 until rowsToCheck
-        ) {
-
-            for (
-                column in
-                0 until columnsToCheck
-            ) {
-
-                val brightness =
-                    sampleCellBrightness(
-                        bitmap,
-                        grid,
-                        row,
-                        column
-                    )
-
-                minimum =
-                    min(
-                        minimum,
-                        brightness
-                    )
-
-                maximum =
-                    max(
-                        maximum,
-                        brightness
-                    )
-
-                total +=
-                    brightness
-
-                samples++
-            }
-        }
-
-        if (samples == 0) {
-            return 0f
-        }
-
-        val average =
-            total /
-                    samples
-
-        val range =
-            maximum -
-                    minimum
-
-        /*
-         * Prefer boards where cells have
-         * meaningful but not extreme
-         * brightness variation.
-         */
-        val averageFactor =
-            if (
-                average > 10f &&
-                average < 245f
-            ) {
-                1f
-            } else {
-                0.5f
-            }
-
-        return (
-            range *
-                    averageFactor
-            )
-            .coerceIn(
-                0f,
-                255f
-            )
-    }
-
-    /**
-     * Favors reasonable board geometry.
-     */
-    private fun shapeScore(
-        grid: DetectedGrid
-    ): Float {
+        val searchBottom =
+            (height * SEARCH_BOTTOM)
+                .toInt()
+                .coerceAtMost(height)
 
         if (
-            grid.cellWidth <= 0f ||
-            grid.cellHeight <= 0f
+            searchRight <= searchLeft ||
+            searchBottom <= searchTop
         ) {
-            return 0f
+            return null
         }
 
-        val ratio =
-            grid.cellWidth /
-                    grid.cellHeight
+        val minBoardWidth =
+            width * MIN_BOARD_WIDTH_RATIO
 
-        val difference =
-            abs(
-                1f - ratio
-            )
+        val maxBoardWidth =
+            width * MAX_BOARD_WIDTH_RATIO
 
-        return (
-            1f -
-                    difference.coerceIn(
-                        0f,
-                        1f
-                    )
-            ) * 255f
-    }
+        val minBoardHeight =
+            height * MIN_BOARD_HEIGHT_RATIO
 
-    /**
-     * Favors boards located in the usual
-     * middle portion of portrait games.
-     */
-    private fun screenPositionScore(
-        bitmap: Bitmap,
-        grid: DetectedGrid
-    ): Float {
+        val maxBoardHeight =
+            height * MAX_BOARD_HEIGHT_RATIO
 
-        val screenCenter =
-            bitmap.height *
-                    0.42f
+        /*
+         * Estimate cell size from board width.
+         *
+         * We use several possible board widths instead of
+         * scanning every possible pixel.
+         */
+        val widthSteps = 12
 
-        val boardCenter =
-            grid.centerY
-
-        val distance =
-            abs(
-                boardCenter -
-                        screenCenter
-            )
-
-        val maximumDistance =
-            bitmap.height *
-                    0.35f
-
-        if (
-            maximumDistance <= 0f
-        ) {
-            return 0f
-        }
-
-        return (
-            1f -
-                    (
-                        distance /
-                                maximumDistance
-                        )
-                            .coerceIn(
-                                0f,
-                                1f
-                            )
-            ) * 255f
-    }
-
-    /**
-     * Samples the center portion of a cell.
-     *
-     * We avoid the outer edge because many
-     * games have grid borders or shadows.
-     */
-    private fun sampleCellBrightness(
-        bitmap: Bitmap,
-        grid: DetectedGrid,
-        row: Int,
-        column: Int
-    ): Float {
-
-        val centerX =
-            grid.left +
-                    (
-                        column +
-                                0.5f
-                        ) *
-                    grid.cellWidth
-
-        val centerY =
-            grid.top +
-                    (
-                        row +
-                                0.5f
-                        ) *
-                    grid.cellHeight
-
-        val radiusX =
-            grid.cellWidth *
-                    0.22f
-
-        val radiusY =
-            grid.cellHeight *
-                    0.22f
-
-        var total =
-            0f
-
-        var samples =
-            0
-
-        val startX =
+        val widthStep =
             (
-                centerX -
-                        radiusX
-                )
-                .toInt()
+                maxBoardWidth -
+                        minBoardWidth
+                ) /
+                    widthSteps.toFloat()
 
-        val endX =
-            (
-                centerX +
-                        radiusX
-                )
-                .toInt()
+        var best: DetectedGrid? = null
 
-        val startY =
-            (
-                centerY -
-                        radiusY
-                )
-                .toInt()
+        for (i in 0..widthSteps) {
 
-        val endY =
-            (
-                centerY +
-                        radiusY
-                )
-                .toInt()
+            val boardWidth =
+                minBoardWidth +
+                        widthStep * i
 
-        for (
-            y in
-            startY..endY
-        ) {
+            val cellWidth =
+                boardWidth /
+                        columns.toFloat()
+
+            if (cellWidth < 20f) {
+                continue
+            }
+
+            if (cellWidth > 180f) {
+                continue
+            }
+
+            /*
+             * Prefer roughly square cells.
+             */
+            val cellHeight =
+                cellWidth
+
+            val boardHeight =
+                cellHeight *
+                        rows.toFloat()
 
             if (
-                y < 0 ||
-                y >= bitmap.height
+                boardHeight < minBoardHeight ||
+                boardHeight > maxBoardHeight
             ) {
                 continue
             }
 
-            for (
-                x in
-                startX..endX
-            ) {
+            /*
+             * Search possible board centers.
+             *
+             * Only a few positions are tested to keep this fast.
+             */
+            val centerX =
+                (
+                    searchLeft +
+                            searchRight
+                    ) / 2
 
-                if (
-                    x < 0 ||
-                    x >= bitmap.width
-                ) {
-                    continue
+            val centerY =
+                (
+                    searchTop +
+                            searchBottom
+                    ) / 2
+
+            val candidateOffsetsX =
+                intArrayOf(
+                    -80,
+                    -40,
+                    0,
+                    40,
+                    80
+                )
+
+            val candidateOffsetsY =
+                intArrayOf(
+                    -100,
+                    -50,
+                    0,
+                    50,
+                    100
+                )
+
+            for (offsetX in candidateOffsetsX) {
+
+                for (offsetY in candidateOffsetsY) {
+
+                    val cx =
+                        centerX +
+                                offsetX
+
+                    val cy =
+                        centerY +
+                                offsetY
+
+                    val left =
+                        cx -
+                                boardWidth / 2f
+
+                    val top =
+                        cy -
+                                boardHeight / 2f
+
+                    val right =
+                        left +
+                                boardWidth
+
+                    val bottom =
+                        top +
+                                boardHeight
+
+                    if (
+                        left < searchLeft ||
+                        top < searchTop ||
+                        right > searchRight ||
+                        bottom > searchBottom
+                    ) {
+                        continue
+                    }
+
+                    val score =
+                        scoreGrid(
+                            bitmap = bitmap,
+                            left = left,
+                            top = top,
+                            right = right,
+                            bottom = bottom,
+                            rows = rows,
+                            columns = columns
+                        )
+
+                    if (
+                        score <= 0f
+                    ) {
+                        continue
+                    }
+
+                    val candidate =
+                        DetectedGrid(
+                            left =
+                                (left / width)
+                                    .coerceIn(
+                                        0f,
+                                        1f
+                                    ),
+
+                            top =
+                                (top / height)
+                                    .coerceIn(
+                                        0f,
+                                        1f
+                                    ),
+
+                            right =
+                                (right / width)
+                                    .coerceIn(
+                                        0f,
+                                        1f
+                                    ),
+
+                            bottom =
+                                (bottom / height)
+                                    .coerceIn(
+                                        0f,
+                                        1f
+                                    ),
+
+                            rows = rows,
+
+                            columns = columns,
+
+                            cellWidth =
+                                boardWidth /
+                                        columns.toFloat(),
+
+                            cellHeight =
+                                boardHeight /
+                                        rows.toFloat(),
+
+                            score = score
+                        )
+
+                    if (
+                        best == null ||
+                        candidate.score >
+                        best.score
+                    ) {
+                        best = candidate
+                    }
                 }
+            }
+        }
+
+        return best
+    }
+
+    // ============================================================
+    // GRID SCORING
+    // ============================================================
+
+    private fun scoreGrid(
+        bitmap: Bitmap,
+        left: Float,
+        top: Float,
+        right: Float,
+        bottom: Float,
+        rows: Int,
+        columns: Int
+    ): Float {
+
+        if (
+            right <= left ||
+            bottom <= top
+        ) {
+            return 0f
+        }
+
+        val boardWidth =
+            right - left
+
+        val boardHeight =
+            bottom - top
+
+        val cellWidth =
+            boardWidth /
+                    columns.toFloat()
+
+        val cellHeight =
+            boardHeight /
+                    rows.toFloat()
+
+        if (
+            cellWidth <= 5f ||
+            cellHeight <= 5f
+        ) {
+            return 0f
+        }
+
+        var contrastScore = 0f
+        var darkCellScore = 0f
+        var regularityScore = 0f
+
+        var samples = 0
+
+        /*
+         * Instead of examining every pixel,
+         * examine the center and edge samples of cells.
+         */
+        for (row in 0 until rows) {
+
+            for (column in 0 until columns) {
+
+                val centerX =
+                    left +
+                            (column + 0.5f) *
+                            cellWidth
+
+                val centerY =
+                    top +
+                            (row + 0.5f) *
+                            cellHeight
+
+                val x =
+                    centerX
+                        .toInt()
+                        .coerceIn(
+                            0,
+                            bitmap.width - 1
+                        )
+
+                val y =
+                    centerY
+                        .toInt()
+                        .coerceIn(
+                            0,
+                            bitmap.height - 1
+                        )
 
                 val pixel =
                     bitmap.getPixel(
@@ -830,30 +581,90 @@ object UniversalGridDetector {
                     )
 
                 val red =
-                    (
-                        pixel shr 16
-                    ) and 0xFF
+                    (pixel shr 16) and 0xFF
 
                 val green =
-                    (
-                        pixel shr 8
-                    ) and 0xFF
+                    (pixel shr 8) and 0xFF
 
                 val blue =
                     pixel and 0xFF
 
-                /*
-                 * Perceived brightness.
-                 */
                 val brightness =
                     (
-                        red * 0.299f +
-                                green * 0.587f +
-                                blue * 0.114f
+                        red +
+                                green +
+                                blue
+                        ) / 3f
+
+                /*
+                 * Block-game empty cells are often darker
+                 * than the surrounding bright UI.
+                 */
+                if (
+                    brightness < 115f
+                ) {
+                    darkCellScore += 1f
+                }
+
+                /*
+                 * Check a point near the cell boundary.
+                 *
+                 * Regular board cells tend to have similar
+                 * boundary behavior.
+                 */
+                val edgeX =
+                    left +
+                            column * cellWidth +
+                            cellWidth * 0.08f
+
+                val edgeY =
+                    top +
+                            row * cellHeight +
+                            cellHeight * 0.08f
+
+                val ex =
+                    edgeX
+                        .toInt()
+                        .coerceIn(
+                            0,
+                            bitmap.width - 1
                         )
 
-                total +=
-                    brightness
+                val ey =
+                    edgeY
+                        .toInt()
+                        .coerceIn(
+                            0,
+                            bitmap.height - 1
+                        )
+
+                val edgePixel =
+                    bitmap.getPixel(
+                        ex,
+                        ey
+                    )
+
+                val edgeR =
+                    (edgePixel shr 16) and 0xFF
+
+                val edgeG =
+                    (edgePixel shr 8) and 0xFF
+
+                val edgeB =
+                    edgePixel and 0xFF
+
+                val edgeBrightness =
+                    (
+                        edgeR +
+                                edgeG +
+                                edgeB
+                        ) / 3f
+
+                contrastScore +=
+                    abs(
+                        brightness -
+                                edgeBrightness
+                    ) / 255f
 
                 samples++
             }
@@ -863,30 +674,166 @@ object UniversalGridDetector {
             return 0f
         }
 
-        return total /
-                samples
-    }
+        darkCellScore /=
+            samples.toFloat()
 
-    /**
-     * Converts raw candidate score into
-     * a 0..1 confidence value.
-     */
-    private fun normalizeConfidence(
-        score: Float
-    ): Float {
+        contrastScore /=
+            samples.toFloat()
 
         /*
-         * The detector works with a combination
-         * of several 0..255 metrics.
+         * Check whether cell dimensions are regular.
          */
-        val normalized =
-            score /
-                    255f
+        val dimensionDifference =
+            abs(
+                cellWidth -
+                        cellHeight
+            )
 
-        return normalized
+        regularityScore =
+            (
+                1f -
+                        (
+                            dimensionDifference /
+                                    max(
+                                        cellWidth,
+                                        cellHeight
+                                    )
+                        )
+                )
+                .coerceIn(
+                    0f,
+                    1f
+                )
+
+        /*
+         * Empty board cells usually form a repeated pattern.
+         */
+        val darknessComponent =
+            darkCellScore
+                .coerceIn(
+                    0f,
+                    1f
+                )
+
+        val contrastComponent =
+            contrastScore
+                .coerceIn(
+                    0f,
+                    1f
+                )
+
+        /*
+         * Combined score.
+         *
+         * Darkness is deliberately weighted more heavily because
+         * Block Blitz-like boards have dark empty cells.
+         */
+        var score =
+            darknessComponent * 0.55f +
+                    regularityScore * 0.30f +
+                    contrastComponent * 0.15f
+
+        /*
+         * Penalize obviously bad geometry.
+         */
+        val aspect =
+            boardWidth /
+                    boardHeight
+
+        if (
+            aspect < 0.70f ||
+            aspect > 1.45f
+        ) {
+            score *= 0.65f
+        }
+
+        /*
+         * Prefer large boards over tiny accidental rectangles.
+         */
+        val areaRatio =
+            (
+                boardWidth *
+                        boardHeight
+                ) /
+                    (
+                        bitmap.width *
+                                bitmap.height
+                        )
+                            .toFloat()
+
+        if (areaRatio < 0.08f) {
+            score *= 0.65f
+        }
+
+        return score
             .coerceIn(
                 0f,
                 1f
             )
+    }
+
+    // ============================================================
+    // CELL HELPERS
+    // ============================================================
+
+    /**
+     * Returns the pixel coordinate of a cell center.
+     */
+    fun cellCenter(
+        grid: DetectedGrid,
+        row: Int,
+        column: Int,
+        bitmapWidth: Int,
+        bitmapHeight: Int
+    ): Pair<Float, Float>? {
+
+        if (
+            row !in 0 until grid.rows ||
+            column !in 0 until grid.columns
+        ) {
+            return null
+        }
+
+        val boardLeft =
+            grid.left *
+                    bitmapWidth
+
+        val boardTop =
+            grid.top *
+                    bitmapHeight
+
+        val x =
+            boardLeft +
+                    (
+                        column + 0.5f
+                        ) *
+                    grid.cellWidth
+
+        val y =
+            boardTop +
+                    (
+                        row + 0.5f
+                        ) *
+                    grid.cellHeight
+
+        return x to y
+    }
+
+    /**
+     * Quickly returns the approximate board rectangle
+     * in pixel coordinates.
+     */
+    fun pixelBounds(
+        grid: DetectedGrid,
+        bitmapWidth: Int,
+        bitmapHeight: Int
+    ): FloatArray {
+
+        return floatArrayOf(
+            grid.left * bitmapWidth,
+            grid.top * bitmapHeight,
+            grid.right * bitmapWidth,
+            grid.bottom * bitmapHeight
+        )
     }
 }
