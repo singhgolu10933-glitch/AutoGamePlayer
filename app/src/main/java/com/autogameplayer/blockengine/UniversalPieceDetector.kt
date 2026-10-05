@@ -8,19 +8,24 @@ import kotlin.math.min
 /**
  * Universal block-piece detector.
  *
- * Detects block pieces from the lower/tray area
- * of block-puzzle games.
+ * This detector does NOT assume:
+ * - Block Blitz
+ * - fixed piece coordinates
+ * - fixed piece sizes
+ * - fixed colors
  *
- * No game-specific coordinates are used.
+ * It detects colored cells in the lower tray,
+ * groups nearby cells into individual pieces,
+ * and normalizes their shapes.
  */
 object UniversalPieceDetector {
 
+    private const val MAX_PIECES = 5
+
+    private const val MAX_COMPONENTS = 80
+
     /**
-     * Detects available pieces.
-     *
-     * The detector searches the lower part of the
-     * screen and attempts to separate individual
-     * colored pieces.
+     * Main entry point.
      */
     fun detect(
         bitmap: Bitmap,
@@ -41,8 +46,11 @@ object UniversalPieceDetector {
             return emptyList()
         }
 
+        /*
+         * Find the lower tray.
+         */
         val tray =
-            detectTray(
+            findTray(
                 bitmap,
                 grid
             )
@@ -51,50 +59,88 @@ object UniversalPieceDetector {
             return emptyList()
         }
 
-        val regions =
-            splitTray(
+        /*
+         * Detect individual colored block regions.
+         */
+        val components =
+            detectColoredComponents(
                 bitmap,
                 tray
             )
 
+        if (components.isEmpty()) {
+            return emptyList()
+        }
+
+        /*
+         * Merge visual fragments belonging to
+         * the same physical block.
+         */
+        val mergedBlocks =
+            mergeBlockComponents(
+                components
+            )
+
+        if (mergedBlocks.isEmpty()) {
+            return emptyList()
+        }
+
+        /*
+         * Group blocks into individual pieces.
+         */
+        val groups =
+            groupBlocksIntoPieces(
+                mergedBlocks
+            )
+
+        if (groups.isEmpty()) {
+            return emptyList()
+        }
+
+        /*
+         * Convert every group into a normalized
+         * UniversalBlockPiece.
+         */
         val pieces =
             mutableListOf<UniversalBlockPiece>()
 
         for (
-            index in
-            regions.indices
+            groupIndex in
+            groups.indices
         ) {
 
-            val region =
-                regions[index]
+            val group =
+                groups[groupIndex]
 
-            val cells =
-                detectCells(
-                    bitmap = bitmap,
-                    region = region,
-                    grid = grid
+            val shape =
+                convertGroupToShape(
+                    group
                 )
 
-            if (cells.isEmpty()) {
+            if (shape.isEmpty()) {
                 continue
             }
 
             pieces.add(
                 UniversalBlockPiece(
-                    id = index,
-                    cells = cells
+                    id = groupIndex,
+                    cells = shape
                 )
             )
         }
 
         return pieces
-            .take(5)
+            .take(MAX_PIECES)
     }
 
+    // ============================================================
+    // DATA CLASSES
+    // ============================================================
+
     /**
-     * Tray region in screen coordinates.
+     * Lower tray region.
      */
-    private data class TrayRegion(
+    private data class Tray(
         val left: Int,
         val top: Int,
         val right: Int,
@@ -102,58 +148,87 @@ object UniversalPieceDetector {
     )
 
     /**
-     * Finds the area below the detected board
-     * where loose pieces are normally displayed.
+     * A visual connected component.
      */
-    private fun detectTray(
+    private data class VisualComponent(
+        val left: Int,
+        val top: Int,
+        val right: Int,
+        val bottom: Int,
+        val centerX: Float,
+        val centerY: Float,
+        val area: Int
+    ) {
+
+        val width: Int
+            get() = right - left
+
+        val height: Int
+            get() = bottom - top
+    }
+
+    /**
+     * A merged physical block.
+     */
+    private data class BlockCell(
+        val centerX: Float,
+        val centerY: Float,
+        val width: Float,
+        val height: Float
+    )
+
+    // ============================================================
+    // TRAY DETECTION
+    // ============================================================
+
+    private fun findTray(
         bitmap: Bitmap,
         grid: UniversalGridDetector.DetectedGrid
-    ): TrayRegion? {
+    ): Tray? {
 
-        val screenWidth =
+        val width =
             bitmap.width
 
-        val screenHeight =
+        val height =
             bitmap.height
 
         /*
-         * Normally pieces appear below the board.
+         * Pieces normally appear below the board.
+         *
+         * Start just below the detected board.
          */
-        val minimumTop =
-            max(
-                grid.bottom + 10,
-                (
-                    screenHeight *
-                            0.58f
-                    ).toInt()
-            )
-
-        val maximumTop =
-            (
-                screenHeight *
-                        0.82f
-                ).toInt()
-
-        if (
-            minimumTop >=
-            screenHeight
-        ) {
-            return null
-        }
-
         val top =
-            min(
-                minimumTop,
-                maximumTop
-            )
+            (
+                grid.bottom +
+                        max(
+                            20,
+                            (
+                                grid.cellHeight *
+                                        0.15f
+                                ).toInt()
+                        )
+                )
+                .coerceAtLeast(
+                    (
+                        height *
+                                0.60f
+                        ).toInt()
+                )
+                .coerceAtMost(
+                    height - 20
+                )
 
+        /*
+         * Keep enough room for the complete tray.
+         */
         val bottom =
             (
-                screenHeight *
+                height *
                         0.97f
-                ).toInt()
+                )
+                .toInt()
                 .coerceAtMost(
-                    screenHeight - 1
+                    height - 1
                 )
 
         if (
@@ -163,19 +238,21 @@ object UniversalPieceDetector {
         }
 
         /*
-         * Use a broad horizontal region.
+         * Almost full screen width.
          */
         val left =
             (
-                screenWidth *
+                width *
                         0.04f
-                ).toInt()
+                )
+                .toInt()
 
         val right =
             (
-                screenWidth *
+                width *
                         0.96f
-                ).toInt()
+                )
+                .toInt()
 
         if (
             right <= left
@@ -183,7 +260,7 @@ object UniversalPieceDetector {
             return null
         }
 
-        return TrayRegion(
+        return Tray(
             left = left,
             top = top,
             right = right,
@@ -191,808 +268,430 @@ object UniversalPieceDetector {
         )
     }
 
-    /**
-     * Splits the tray into broad candidate
-     * regions.
-     *
-     * Most block puzzle games show 3 pieces,
-     * but some can show more.
-     */
-    private fun splitTray(
+    // ============================================================
+    // COLOR COMPONENT DETECTION
+    // ============================================================
+
+    private fun detectColoredComponents(
         bitmap: Bitmap,
-        tray: TrayRegion
-    ): List<TrayRegion> {
-
-        val width =
-            tray.right -
-                    tray.left
-
-        if (width <= 0) {
-            return emptyList()
-        }
+        tray: Tray
+    ): List<VisualComponent> {
 
         /*
-         * First try 3 slots.
+         * Downsample the scan.
+         *
+         * This is considerably cheaper than checking
+         * every pixel while still being accurate enough
+         * for block-sized objects.
          */
-        val threeSlotRegions =
-            createSlots(
-                tray,
-                3
-            )
+        val step =
+            2
 
-        val detectedThree =
-            threeSlotRegions.filter {
-                regionContainsPiece(
-                    bitmap,
-                    it
-                )
-            }
-
-        if (detectedThree.isNotEmpty()) {
-            return detectedThree
-        }
-
-        /*
-         * Some games use 4 pieces.
-         */
-        val fourSlotRegions =
-            createSlots(
-                tray,
-                4
-            )
-
-        val detectedFour =
-            fourSlotRegions.filter {
-                regionContainsPiece(
-                    bitmap,
-                    it
-                )
-            }
-
-        if (detectedFour.isNotEmpty()) {
-            return detectedFour
-        }
-
-        /*
-         * Some games use 5 pieces.
-         */
-        val fiveSlotRegions =
-            createSlots(
-                tray,
-                5
-            )
-
-        val detectedFive =
-            fiveSlotRegions.filter {
-                regionContainsPiece(
-                    bitmap,
-                    it
-                )
-            }
-
-        if (detectedFive.isNotEmpty()) {
-            return detectedFive
-        }
-
-        /*
-         * Last fallback:
-         * split the tray into smaller regions.
-         */
-        return createSlots(
-            tray,
-            3
-        )
-    }
-
-    /**
-     * Creates equally spaced tray slots.
-     */
-    private fun createSlots(
-        tray: TrayRegion,
-        count: Int
-    ): List<TrayRegion> {
-
-        if (count <= 0) {
-            return emptyList()
-        }
-
-        val width =
-            tray.right -
-                    tray.left
-
-        val slotWidth =
-            width.toFloat() /
-                    count.toFloat()
-
-        val result =
-            mutableListOf<TrayRegion>()
-
-        /*
-         * Keep some horizontal padding inside
-         * each slot so neighboring pieces don't
-         * merge together.
-         */
-        val padding =
+        val sampleWidth =
             (
-                slotWidth *
-                        0.10f
-                ).toInt()
-
-        for (
-            index in
-            0 until count
-        ) {
-
-            val rawLeft =
-                (
-                    tray.left +
-                            index *
-                            slotWidth
-                    ).toInt()
-
-            val rawRight =
-                (
-                    tray.left +
-                            (
-                                index + 1
-                            ) *
-                            slotWidth
-                    ).toInt()
-
-            val left =
-                (
-                    rawLeft +
-                            padding
-                    )
-                    .coerceAtLeast(
+                tray.right -
                         tray.left
-                    )
+                ) / step
 
-            val right =
-                (
-                    rawRight -
-                            padding
-                    )
-                    .coerceAtMost(
-                        tray.right
-                    )
+        val sampleHeight =
+            (
+                tray.bottom -
+                        tray.top
+                ) / step
 
-            if (
-                right <= left
-            ) {
-                continue
-            }
-
-            result.add(
-                TrayRegion(
-                    left = left,
-                    top = tray.top,
-                    right = right,
-                    bottom = tray.bottom
-                )
-            )
+        if (
+            sampleWidth <= 0 ||
+            sampleHeight <= 0
+        ) {
+            return emptyList()
         }
 
-        return result
-    }
+        val visited =
+            Array(sampleHeight) {
+                BooleanArray(
+                    sampleWidth
+                )
+            }
 
-    /**
-     * Checks whether a slot contains colored/
-     * bright pixels that could represent a piece.
-     */
-    private fun regionContainsPiece(
-        bitmap: Bitmap,
-        region: TrayRegion
-    ): Boolean {
-
-        var coloredPixels =
-            0
-
-        var sampledPixels =
-            0
-
-        /*
-         * Sample every few pixels rather than
-         * scanning the entire region.
-         */
-        val stepX =
-            max(
-                2,
-                (
-                    (
-                        region.right -
-                                region.left
-                        ) /
-                            30
-                    )
-            )
-
-        val stepY =
-            max(
-                2,
-                (
-                    (
-                        region.bottom -
-                                region.top
-                        ) /
-                            25
-                    )
-            )
+        val components =
+            mutableListOf<VisualComponent>()
 
         for (
-            y in
-            region.top until region.bottom
-                step stepY
+            sy in
+            0 until sampleHeight
         ) {
 
             for (
-                x in
-                region.left until region.right
-                    step stepX
+                sx in
+                0 until sampleWidth
             ) {
+
+                if (
+                    visited[sy][sx]
+                ) {
+                    continue
+                }
+
+                val pixelX =
+                    tray.left +
+                            sx * step
+
+                val pixelY =
+                    tray.top +
+                            sy * step
+
+                if (
+                    pixelX < 0 ||
+                    pixelX >= bitmap.width ||
+                    pixelY < 0 ||
+                    pixelY >= bitmap.height
+                ) {
+                    visited[sy][sx] = true
+                    continue
+                }
 
                 val pixel =
                     bitmap.getPixel(
-                        x,
-                        y
+                        pixelX,
+                        pixelY
                     )
 
-                sampledPixels++
-
                 if (
-                    isPiecePixel(
+                    !looksLikePiecePixel(
                         pixel
                     )
                 ) {
-                    coloredPixels++
+                    visited[sy][sx] = true
+                    continue
                 }
-            }
-        }
 
-        if (
-            sampledPixels <= 0
-        ) {
-            return false
-        }
-
-        val ratio =
-            coloredPixels.toFloat() /
-                    sampledPixels.toFloat()
-
-        return ratio >=
-                0.035f
-    }
-
-    /**
-     * Detects relative cells inside a piece.
-     */
-    private fun detectCells(
-        bitmap: Bitmap,
-        region: TrayRegion,
-        grid: UniversalGridDetector.DetectedGrid
-    ): List<UniversalCell> {
-
-        val cellSize =
-            min(
-                grid.cellWidth,
-                grid.cellHeight
-            )
-
-        if (
-            cellSize <= 2f
-        ) {
-            return emptyList()
-        }
-
-        /*
-         * We scan the region using approximate
-         * board-cell-sized samples.
-         */
-        val regionWidth =
-            (
-                region.right -
-                        region.left
-                )
-                .toFloat()
-
-        val regionHeight =
-            (
-                region.bottom -
-                        region.top
-                )
-                .toFloat()
-
-        if (
-            regionWidth <= 0f ||
-            regionHeight <= 0f
-        ) {
-            return emptyList()
-        }
-
-        /*
-         * Determine a safe maximum piece grid.
-         *
-         * Most block pieces fit within 5x5.
-         */
-        val maxColumns =
-            5
-
-        val maxRows =
-            5
-
-        /*
-         * Approximate center of the candidate.
-         */
-        val centerX =
-            (
-                region.left +
-                        region.right
-                ) / 2f
-
-        val centerY =
-            (
-                region.top +
-                        region.bottom
-                ) / 2f
-
-        /*
-         * Estimate how many cells could fit.
-         */
-        val estimatedColumns =
-            (
-                regionWidth /
-                        cellSize
-                )
-                .toInt()
-                .coerceIn(
-                    1,
-                    maxColumns
-                )
-
-        val estimatedRows =
-            (
-                regionHeight /
-                        cellSize
-                )
-                .toInt()
-                .coerceIn(
-                    1,
-                    maxRows
-                )
-
-        /*
-         * We don't assume that the piece starts
-         * at the exact region center. Try several
-         * offsets and select the strongest result.
-         */
-        var bestCells =
-            emptyList<UniversalCell>()
-
-        var bestScore =
-            0f
-
-        val offsetRange =
-            -2..2
-
-        for (
-            offsetY in
-            offsetRange
-        ) {
-
-            for (
-                offsetX in
-                offsetRange
-            ) {
-
-                val candidate =
-                    samplePieceGrid(
+                /*
+                 * Flood-fill this colored region.
+                 */
+                val component =
+                    floodFill(
                         bitmap = bitmap,
-                        centerX =
-                            centerX +
-                                    offsetX *
-                                    cellSize *
-                                    0.18f,
-                        centerY =
-                            centerY +
-                                    offsetY *
-                                    cellSize *
-                                    0.18f,
-                        cellSize = cellSize,
-                        rows =
-                            estimatedRows,
-                        columns =
-                            estimatedColumns
-                    )
-
-                val score =
-                    pieceShapeScore(
-                        candidate
+                        tray = tray,
+                        startX = sx,
+                        startY = sy,
+                        step = step,
+                        visited = visited
                     )
 
                 if (
-                    score >
-                    bestScore
+                    component != null &&
+                    component.area >= 8
                 ) {
 
-                    bestScore =
-                        score
+                    components.add(
+                        component
+                    )
+                }
 
-                    bestCells =
-                        candidate
+                if (
+                    components.size >=
+                    MAX_COMPONENTS
+                ) {
+                    return components
                 }
             }
         }
 
+        return components
+    }
+
+    /**
+     * Flood-fill colored pixels.
+     */
+    private fun floodFill(
+        bitmap: Bitmap,
+        tray: Tray,
+        startX: Int,
+        startY: Int,
+        step: Int,
+        visited: Array<BooleanArray>
+    ): VisualComponent? {
+
+        val height =
+            visited.size
+
+        val width =
+            if (
+                height > 0
+            ) {
+                visited[0].size
+            } else {
+                0
+            }
+
+        if (
+            startX !in 0 until width ||
+            startY !in 0 until height
+        ) {
+            return null
+        }
+
+        val queueX =
+            IntArray(
+                width * height
+            )
+
+        val queueY =
+            IntArray(
+                width * height
+            )
+
+        var head =
+            0
+
+        var tail =
+            0
+
+        queueX[tail] =
+            startX
+
+        queueY[tail] =
+            startY
+
+        tail++
+
+        visited[startY][startX] =
+            true
+
+        var minX =
+            startX
+
+        var maxX =
+            startX
+
+        var minY =
+            startY
+
+        var maxY =
+            startY
+
+        var sumX =
+            0L
+
+        var sumY =
+            0L
+
+        var count =
+            0
+
+        while (
+            head < tail
+        ) {
+
+            val x =
+                queueX[head]
+
+            val y =
+                queueY[head]
+
+            head++
+
+            sumX += x
+            sumY += y
+            count++
+
+            minX =
+                min(
+                    minX,
+                    x
+                )
+
+            maxX =
+                max(
+                    maxX,
+                    x
+                )
+
+            minY =
+                min(
+                    minY,
+                    y
+                )
+
+            maxY =
+                max(
+                    maxY,
+                    y
+                )
+
+            /*
+             * 4-direction connectivity.
+             */
+            val dx =
+                intArrayOf(
+                    1,
+                    -1,
+                    0,
+                    0
+                )
+
+            val dy =
+                intArrayOf(
+                    0,
+                    0,
+                    1,
+                    -1
+                )
+
+            for (
+                direction in
+                0..3
+            ) {
+
+                val nx =
+                    x +
+                            dx[direction]
+
+                val ny =
+                    y +
+                            dy[direction]
+
+                if (
+                    nx !in 0 until width ||
+                    ny !in 0 until height
+                ) {
+                    continue
+                }
+
+                if (
+                    visited[ny][nx]
+                ) {
+                    continue
+                }
+
+                val px =
+                    tray.left +
+                            nx * step
+
+                val py =
+                    tray.top +
+                            ny * step
+
+                if (
+                    px < 0 ||
+                    px >= bitmap.width ||
+                    py < 0 ||
+                    py >= bitmap.height
+                ) {
+                    visited[ny][nx] = true
+                    continue
+                }
+
+                val pixel =
+                    bitmap.getPixel(
+                        px,
+                        py
+                    )
+
+                if (
+                    looksLikePiecePixel(
+                        pixel
+                    )
+                ) {
+
+                    visited[ny][nx] =
+                        true
+
+                    if (
+                        tail <
+                        queueX.size
+                    ) {
+
+                        queueX[tail] =
+                            nx
+
+                        queueY[tail] =
+                            ny
+
+                        tail++
+                    }
+
+                } else {
+
+                    visited[ny][nx] =
+                        true
+                }
+            }
+        }
+
+        if (
+            count <= 0
+        ) {
+            return null
+        }
+
+        val actualLeft =
+            tray.left +
+                    minX * step
+
+        val actualTop =
+            tray.top +
+                    minY * step
+
+        val actualRight =
+            tray.left +
+                    (
+                        maxX + 1
+                    ) * step
+
+        val actualBottom =
+            tray.top +
+                    (
+                        maxY + 1
+                    ) * step
+
         /*
-         * Very tiny or noisy detections are
-         * rejected.
+         * Ignore extremely large regions.
+         * They are usually tray/background detection.
          */
-        if (
-            bestCells.isEmpty()
-        ) {
-            return emptyList()
-        }
+        val componentWidth =
+            actualRight -
+                    actualLeft
+
+        val componentHeight =
+            actualBottom -
+                    actualTop
 
         if (
-            bestCells.size > 25
+            componentWidth > 250 ||
+            componentHeight > 250
         ) {
-            return emptyList()
+            return null
         }
 
-        return normalizeCells(
-            bestCells
+        return VisualComponent(
+            left = actualLeft,
+            top = actualTop,
+            right = actualRight,
+            bottom = actualBottom,
+            centerX =
+                tray.left +
+                        (
+                            sumX.toFloat() /
+                                    count.toFloat()
+                            ) *
+                        step,
+            centerY =
+                tray.top +
+                        (
+                            sumY.toFloat() /
+                                    count.toFloat()
+                            ) *
+                        step,
+            area = count
         )
     }
 
     /**
-     * Samples an approximate piece grid.
+     * Determines whether a pixel looks like
+     * a colored block rather than the dark tray.
      */
-    private fun samplePieceGrid(
-        bitmap: Bitmap,
-        centerX: Float,
-        centerY: Float,
-        cellSize: Float,
-        rows: Int,
-        columns: Int
-    ): List<UniversalCell> {
-
-        if (
-            rows <= 0 ||
-            columns <= 0
-        ) {
-            return emptyList()
-        }
-
-        val totalWidth =
-            columns *
-                    cellSize
-
-        val totalHeight =
-            rows *
-                    cellSize
-
-        val startX =
-            centerX -
-                    totalWidth /
-                    2f
-
-        val startY =
-            centerY -
-                    totalHeight /
-                    2f
-
-        val cells =
-            mutableListOf<UniversalCell>()
-
-        for (
-            row in
-            0 until rows
-        ) {
-
-            for (
-                column in
-                0 until columns
-            ) {
-
-                val cellCenterX =
-                    startX +
-                            (
-                                column +
-                                        0.5f
-                                ) *
-                            cellSize
-
-                val cellCenterY =
-                    startY +
-                            (
-                                row +
-                                        0.5f
-                                ) *
-                            cellSize
-
-                val brightness =
-                    sampleBrightness(
-                        bitmap,
-                        cellCenterX,
-                        cellCenterY,
-                        cellSize
-                    )
-
-                val colorStrength =
-                    sampleColorStrength(
-                        bitmap,
-                        cellCenterX,
-                        cellCenterY,
-                        cellSize
-                    )
-
-                if (
-                    isLikelyPieceCell(
-                        brightness,
-                        colorStrength
-                    )
-                ) {
-
-                    cells.add(
-                        UniversalCell(
-                            row = row,
-                            column = column
-                        )
-                    )
-                }
-            }
-        }
-
-        return cells
-    }
-
-    /**
-     * Calculates brightness around a point.
-     */
-    private fun sampleBrightness(
-        bitmap: Bitmap,
-        centerX: Float,
-        centerY: Float,
-        cellSize: Float
-    ): Float {
-
-        val radius =
-            (
-                cellSize *
-                        0.20f
-                )
-                .coerceAtLeast(
-                    2f
-                )
-
-        val startX =
-            (
-                centerX -
-                        radius
-                ).toInt()
-
-        val endX =
-            (
-                centerX +
-                        radius
-                ).toInt()
-
-        val startY =
-            (
-                centerY -
-                        radius
-                ).toInt()
-
-        val endY =
-            (
-                centerY +
-                        radius
-                ).toInt()
-
-        var total =
-            0f
-
-        var count =
-            0
-
-        for (
-            y in
-            startY..endY
-        ) {
-
-            if (
-                y < 0 ||
-                y >= bitmap.height
-            ) {
-                continue
-            }
-
-            for (
-                x in
-                startX..endX
-            ) {
-
-                if (
-                    x < 0 ||
-                    x >= bitmap.width
-                ) {
-                    continue
-                }
-
-                val pixel =
-                    bitmap.getPixel(
-                        x,
-                        y
-                    )
-
-                val red =
-                    (
-                        pixel shr 16
-                    ) and 0xFF
-
-                val green =
-                    (
-                        pixel shr 8
-                    ) and 0xFF
-
-                val blue =
-                    pixel and 0xFF
-
-                total +=
-                    red * 0.299f +
-                            green * 0.587f +
-                            blue * 0.114f
-
-                count++
-            }
-        }
-
-        if (
-            count == 0
-        ) {
-            return 0f
-        }
-
-        return total /
-                count.toFloat()
-    }
-
-    /**
-     * Measures how strongly colored a pixel area is.
-     */
-    private fun sampleColorStrength(
-        bitmap: Bitmap,
-        centerX: Float,
-        centerY: Float,
-        cellSize: Float
-    ): Float {
-
-        val radius =
-            (
-                cellSize *
-                        0.20f
-                )
-                .coerceAtLeast(
-                    2f
-                )
-
-        val startX =
-            (
-                centerX -
-                        radius
-                ).toInt()
-
-        val endX =
-            (
-                centerX +
-                        radius
-                ).toInt()
-
-        val startY =
-            (
-                centerY -
-                        radius
-                ).toInt()
-
-        val endY =
-            (
-                centerY +
-                        radius
-                ).toInt()
-
-        var total =
-            0f
-
-        var count =
-            0
-
-        for (
-            y in
-            startY..endY
-        ) {
-
-            if (
-                y < 0 ||
-                y >= bitmap.height
-            ) {
-                continue
-            }
-
-            for (
-                x in
-                startX..endX
-            ) {
-
-                if (
-                    x < 0 ||
-                    x >= bitmap.width
-                ) {
-                    continue
-                }
-
-                val pixel =
-                    bitmap.getPixel(
-                        x,
-                        y
-                    )
-
-                val red =
-                    (
-                        pixel shr 16
-                    ) and 0xFF
-
-                val green =
-                    (
-                        pixel shr 8
-                    ) and 0xFF
-
-                val blue =
-                    pixel and 0xFF
-
-                val maximum =
-                    max(
-                        red,
-                        max(
-                            green,
-                            blue
-                        )
-                    )
-
-                val minimum =
-                    min(
-                        red,
-                        min(
-                            green,
-                            blue
-                        )
-                    )
-
-                total +=
-                    (
-                        maximum -
-                                minimum
-                        )
-                        .toFloat()
-
-                count++
-            }
-        }
-
-        if (
-            count == 0
-        ) {
-            return 0f
-        }
-
-        return total /
-                count.toFloat()
-    }
-
-    /**
-     * Determines whether a pixel area
-     * looks like a colored block.
-     */
-    private fun isPiecePixel(
+    private fun looksLikePiecePixel(
         pixel: Int
     ): Boolean {
 
@@ -1028,147 +727,619 @@ object UniversalPieceDetector {
             )
 
         val brightness =
-            (
-                red * 0.299f +
-                        green * 0.587f +
-                        blue * 0.114f
-                )
+            red * 0.299f +
+                    green * 0.587f +
+                    blue * 0.114f
 
         val saturation =
             maximum -
                     minimum
 
         /*
-         * Colored pieces usually have either:
-         *
-         * - noticeable saturation
-         * - relatively high brightness
+         * The tray in the supplied screenshot is
+         * dark blue, while the pieces are strongly
+         * colored.
          */
         return (
-            saturation >= 35 &&
-                    brightness >= 45
+            saturation >= 40 &&
+                    brightness >= 40
             ) ||
-                brightness >= 145
+                (
+                    saturation >= 25 &&
+                            brightness >= 100
+                    )
+    }
+
+    // ============================================================
+    // MERGE VISUAL FRAGMENTS
+    // ============================================================
+
+    private fun mergeBlockComponents(
+        components: List<VisualComponent>
+    ): List<BlockCell> {
+
+        if (
+            components.isEmpty()
+        ) {
+            return emptyList()
+        }
+
+        /*
+         * Determine typical visual block size.
+         */
+        val widths =
+            components
+                .map {
+                    it.width.toFloat()
+                }
+                .filter {
+                    it >= 8f
+                }
+
+        val heights =
+            components
+                .map {
+                    it.height.toFloat()
+                }
+                .filter {
+                    it >= 8f
+                }
+
+        if (
+            widths.isEmpty() ||
+            heights.isEmpty()
+        ) {
+            return emptyList()
+        }
+
+        val estimatedWidth =
+            median(
+                widths
+            )
+
+        val estimatedHeight =
+            median(
+                heights
+            )
+
+        val blockWidth =
+            estimatedWidth
+                .coerceAtLeast(
+                    8f
+                )
+
+        val blockHeight =
+            estimatedHeight
+                .coerceAtLeast(
+                    8f
+                )
+
+        /*
+         * Components that belong to the same
+         * physical cell are merged if their centers
+         * are very close.
+         */
+        val result =
+            mutableListOf<BlockCell>()
+
+        for (
+            component in
+            components
+        ) {
+
+            /*
+             * Ignore tiny noise.
+             */
+            if (
+                component.width <
+                blockWidth * 0.30f ||
+                component.height <
+                blockHeight * 0.30f
+            ) {
+                continue
+            }
+
+            /*
+             * If a previous cell is extremely close,
+             * merge it.
+             */
+            var merged =
+                false
+
+            for (
+                index in
+                result.indices
+            ) {
+
+                val existing =
+                    result[index]
+
+                val distanceX =
+                    abs(
+                        existing.centerX -
+                                component.centerX
+                    )
+
+                val distanceY =
+                    abs(
+                        existing.centerY -
+                                component.centerY
+                    )
+
+                if (
+                    distanceX <
+                    blockWidth * 0.45f &&
+                    distanceY <
+                    blockHeight * 0.45f
+                ) {
+
+                    result[index] =
+                        BlockCell(
+                            centerX =
+                                (
+                                    existing.centerX +
+                                            component.centerX
+                                    ) / 2f,
+
+                            centerY =
+                                (
+                                    existing.centerY +
+                                            component.centerY
+                                    ) / 2f,
+
+                            width =
+                                max(
+                                    existing.width,
+                                    component.width
+                                ),
+
+                            height =
+                                max(
+                                    existing.height,
+                                    component.height
+                                )
+                        )
+
+                    merged = true
+
+                    break
+                }
+            }
+
+            if (!merged) {
+
+                result.add(
+                    BlockCell(
+                        centerX =
+                            component.centerX,
+
+                        centerY =
+                            component.centerY,
+
+                        width =
+                            component.width.toFloat(),
+
+                        height =
+                            component.height.toFloat()
+                    )
+                )
+            }
+        }
+
+        return result
+    }
+
+    // ============================================================
+    // GROUP BLOCKS INTO PIECES
+    // ============================================================
+
+    private fun groupBlocksIntoPieces(
+        blocks: List<BlockCell>
+    ): List<List<BlockCell>> {
+
+        if (
+            blocks.isEmpty()
+        ) {
+            return emptyList()
+        }
+
+        if (
+            blocks.size == 1
+        ) {
+            return listOf(
+                blocks
+            )
+        }
+
+        /*
+         * Estimate spacing between cells.
+         */
+        val cellWidth =
+            median(
+                blocks.map {
+                    it.width
+                }
+            )
+                .coerceAtLeast(
+                    8f
+                )
+
+        val cellHeight =
+            median(
+                blocks.map {
+                    it.height
+                }
+            )
+                .coerceAtLeast(
+                    8f
+                )
+
+        /*
+         * Sort horizontally first.
+         */
+        val sorted =
+            blocks.sortedBy {
+                it.centerX
+            }
+
+        val groups =
+            mutableListOf<
+                    MutableList<BlockCell>
+                    >()
+
+        var current =
+            mutableListOf<BlockCell>()
+
+        for (
+            block in
+            sorted
+        ) {
+
+            if (
+                current.isEmpty()
+            ) {
+
+                current.add(
+                    block
+                )
+
+                continue
+            }
+
+            val previous =
+                current.last()
+
+            val gap =
+                block.centerX -
+                        previous.centerX
+
+            /*
+             * A normal neighboring cell should be
+             * approximately one cell-width away.
+             *
+             * A large gap normally means the next
+             * piece has started.
+             */
+            val samePiece =
+                gap <=
+                        cellWidth * 2.2f
+
+            if (
+                samePiece
+            ) {
+
+                current.add(
+                    block
+                )
+
+            } else {
+
+                groups.add(
+                    current
+                )
+
+                current =
+                    mutableListOf()
+
+                current.add(
+                    block
+                )
+            }
+        }
+
+        if (
+            current.isNotEmpty()
+        ) {
+
+            groups.add(
+                current
+            )
+        }
+
+        /*
+         * Horizontal grouping alone can sometimes
+         * split a vertically arranged piece.
+         *
+         * Merge groups when their horizontal
+         * distance is small enough.
+         */
+        return mergeNearbyGroups(
+            groups,
+            cellWidth,
+            cellHeight
+        )
     }
 
     /**
-     * Determines whether a sampled cell
-     * looks like an actual piece block.
+     * Merges groups that clearly belong to the
+     * same physical piece.
      */
-    private fun isLikelyPieceCell(
-        brightness: Float,
-        colorStrength: Float
+    private fun mergeNearbyGroups(
+        groups: List<List<BlockCell>>,
+        cellWidth: Float,
+        cellHeight: Float
+    ): List<List<BlockCell>> {
+
+        if (
+            groups.size <= 1
+        ) {
+            return groups
+        }
+
+        val mutable =
+            groups
+                .map {
+                    it.toMutableList()
+                }
+                .toMutableList()
+
+        var changed =
+            true
+
+        while (
+            changed &&
+            mutable.size > 1
+        ) {
+
+            changed =
+                false
+
+            outer@ for (
+                firstIndex in
+                0 until mutable.size
+            ) {
+
+                for (
+                    secondIndex in
+                    firstIndex + 1 until
+                            mutable.size
+                ) {
+
+                    val first =
+                        mutable[firstIndex]
+
+                    val second =
+                        mutable[secondIndex]
+
+                    if (
+                        groupsBelongTogether(
+                            first,
+                            second,
+                            cellWidth,
+                            cellHeight
+                        )
+                    ) {
+
+                        val merged =
+                            mutableListOf<BlockCell>()
+
+                        merged.addAll(
+                            first
+                        )
+
+                        merged.addAll(
+                            second
+                        )
+
+                        mutable[firstIndex] =
+                            merged
+
+                        mutable.removeAt(
+                            secondIndex
+                        )
+
+                        changed =
+                            true
+
+                        break@outer
+                    }
+                }
+            }
+        }
+
+        return mutable
+    }
+
+    /**
+     * Determines whether two groups are close
+     * enough to be part of the same piece.
+     */
+    private fun groupsBelongTogether(
+        first: List<BlockCell>,
+        second: List<BlockCell>,
+        cellWidth: Float,
+        cellHeight: Float
     ): Boolean {
 
-        return (
-            colorStrength >= 20f &&
-                    brightness >= 35f
-            ) ||
-                brightness >= 155f
+        if (
+            first.isEmpty() ||
+            second.isEmpty()
+        ) {
+            return false
+        }
+
+        var minimumDistance =
+            Float.MAX_VALUE
+
+        for (
+            firstBlock in
+            first
+        ) {
+
+            for (
+                secondBlock in
+                second
+            ) {
+
+                val dx =
+                    abs(
+                        firstBlock.centerX -
+                                secondBlock.centerX
+                    )
+
+                val dy =
+                    abs(
+                        firstBlock.centerY -
+                                secondBlock.centerY
+                    )
+
+                val distance =
+                    dx + dy
+
+                minimumDistance =
+                    min(
+                        minimumDistance,
+                        distance
+                    )
+            }
+        }
+
+        /*
+         * Adjacent cells can be separated
+         * horizontally or vertically.
+         */
+        return minimumDistance <=
+                (
+                    cellWidth +
+                            cellHeight
+                    ) * 1.15f
     }
 
-    /**
-     * Scores how plausible a detected shape is.
-     */
-    private fun pieceShapeScore(
-        cells: List<UniversalCell>
-    ): Float {
+    // ============================================================
+    // CONVERT GROUP TO SHAPE
+    // ============================================================
+
+    private fun convertGroupToShape(
+        group: List<BlockCell>
+    ): List<UniversalCell> {
 
         if (
-            cells.isEmpty()
+            group.isEmpty()
         ) {
-            return 0f
+            return emptyList()
         }
 
         if (
-            cells.size > 25
+            group.size > 25
         ) {
-            return 0f
-        }
-
-        val minRow =
-            cells.minOf {
-                it.row
-            }
-
-        val maxRow =
-            cells.maxOf {
-                it.row
-            }
-
-        val minColumn =
-            cells.minOf {
-                it.column
-            }
-
-        val maxColumn =
-            cells.maxOf {
-                it.column
-            }
-
-        val height =
-            maxRow -
-                    minRow +
-                    1
-
-        val width =
-            maxColumn -
-                    minColumn +
-                    1
-
-        if (
-            height <= 0 ||
-            width <= 0
-        ) {
-            return 0f
-        }
-
-        val boundingArea =
-            height *
-                    width
-
-        val density =
-            cells.size.toFloat() /
-                    boundingArea.toFloat()
-
-        /*
-         * Block pieces generally have
-         * reasonably compact shapes.
-         */
-        var score =
-            cells.size *
-                    10f
-
-        score +=
-            density *
-                    100f
-
-        /*
-         * Prefer shapes with 1..25 cells.
-         */
-        if (
-            cells.size in 1..25
-        ) {
-            score += 50f
+            return emptyList()
         }
 
         /*
-         * Penalize very sparse shapes.
+         * Estimate tray-cell spacing.
          */
-        if (
-            density < 0.25f
+        val cellWidth =
+            median(
+                group.map {
+                    it.width
+                }
+            )
+                .coerceAtLeast(
+                    5f
+                )
+
+        val cellHeight =
+            median(
+                group.map {
+                    it.height
+                }
+            )
+                .coerceAtLeast(
+                    5f
+                )
+
+        val originX =
+            group.minOf {
+                it.centerX
+            }
+
+        val originY =
+            group.minOf {
+                it.centerY
+            }
+
+        val rawCells =
+            mutableListOf<UniversalCell>()
+
+        for (
+            block in
+            group
         ) {
-            score -= 60f
+
+            val column =
+                (
+                    (
+                        block.centerX -
+                                originX
+                        ) /
+                            cellWidth
+                    )
+                    .toInt()
+                    .coerceAtLeast(
+                        0
+                    )
+
+            val row =
+                (
+                    (
+                        block.centerY -
+                                originY
+                        ) /
+                            cellHeight
+                    )
+                    .toInt()
+                    .coerceAtLeast(
+                        0
+                    )
+
+            rawCells.add(
+                UniversalCell(
+                    row = row,
+                    column = column
+                )
+            )
         }
 
-        return score
+        /*
+         * Remove duplicates.
+         */
+        val distinct =
+            rawCells
+                .distinct()
+
+        /*
+         * Normalize again.
+         */
+        return normalizeShape(
+            distinct
+        )
     }
 
-    /**
-     * Normalizes a detected shape to start at
-     * row 0 / column 0.
-     */
-    private fun normalizeCells(
+    // ============================================================
+    // NORMALIZATION
+    // ============================================================
+
+    private fun normalizeShape(
         cells: List<UniversalCell>
     ): List<UniversalCell> {
 
@@ -1190,10 +1361,12 @@ object UniversalPieceDetector {
 
         return cells
             .map {
+
                 UniversalCell(
                     row =
                         it.row -
                                 minRow,
+
                     column =
                         it.column -
                                 minColumn
@@ -1207,5 +1380,40 @@ object UniversalPieceDetector {
                     it.column
                 }
             )
+    }
+
+    // ============================================================
+    // MEDIAN
+    // ============================================================
+
+    private fun median(
+        values: List<Float>
+    ): Float {
+
+        if (
+            values.isEmpty()
+        ) {
+            return 0f
+        }
+
+        val sorted =
+            values.sorted()
+
+        val middle =
+            sorted.size / 2
+
+        return if (
+            sorted.size % 2 == 0
+        ) {
+
+            (
+                sorted[middle - 1] +
+                        sorted[middle]
+                ) / 2f
+
+        } else {
+
+            sorted[middle]
+        }
     }
 }
