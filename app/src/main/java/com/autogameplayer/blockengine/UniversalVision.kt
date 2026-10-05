@@ -1,136 +1,174 @@
 package com.autogameplayer.blockengine
 
 import android.graphics.Bitmap
+import kotlin.math.abs
 
 /**
- * Universal vision pipeline for block-puzzle games.
+ * Universal vision pipeline.
  *
  * Pipeline:
  *
  * Screenshot
- *     ↓
- * Grid detection
- *     ↓
- * Board cell detection
- *     ↓
- * Piece detection
- *     ↓
+ *    ↓
+ * Grid Detection
+ *    ↓
+ * Board Cell Detection
+ *    ↓
+ * Piece Detection
+ *    ↓
+ * Confidence
+ *    ↓
  * UniversalBlockState
  *
- * This class contains no Block Blitz-specific
- * coordinates or package references.
+ * No game-specific coordinates are used here.
  */
 object UniversalVision {
 
-    /**
-     * Main vision entry point.
-     */
+    // ============================================================
+    // PUBLIC ANALYSIS
+    // ============================================================
+
     fun analyze(
         bitmap: Bitmap
     ): UniversalBlockState {
 
+        /*
+         * Invalid frame.
+         */
         if (
             bitmap.width <= 0 ||
             bitmap.height <= 0
         ) {
-
             return emptyState()
         }
 
-        return try {
+        // ========================================================
+        // 1. DETECT BOARD GRID
+        // ========================================================
 
-            /*
-             * STEP 1
-             *
-             * Detect the game board.
-             */
-            val grid =
-                UniversalGridDetector.detect(
-                    bitmap
-                )
-
-            if (grid == null) {
-
-                return emptyState()
-            }
-
-            /*
-             * STEP 2
-             *
-             * Detect occupied cells.
-             */
-            val board =
-                detectBoard(
-                    bitmap,
-                    grid
-                )
-
-            /*
-             * STEP 3
-             *
-             * Detect available pieces.
-             */
-            val pieces =
-                UniversalPieceDetector.detect(
-                    bitmap,
-                    grid
-                )
-
-            /*
-             * STEP 4
-             *
-             * Calculate overall confidence.
-             */
-            val confidence =
-                calculateConfidence(
-                    gridConfidence =
-                        grid.confidence,
-                    board = board,
-                    pieces = pieces
-                )
-
-            UniversalBlockState(
-                board = board,
-                pieces = pieces,
-                confidence = confidence,
-
-                boardLeft =
-                    grid.left.toFloat() /
-                            bitmap.width.toFloat(),
-
-                boardTop =
-                    grid.top.toFloat() /
-                            bitmap.height.toFloat(),
-
-                boardRight =
-                    grid.right.toFloat() /
-                            bitmap.width.toFloat(),
-
-                boardBottom =
-                    grid.bottom.toFloat() /
-                            bitmap.height.toFloat()
+        val grid =
+            UniversalGridDetector.detect(
+                bitmap
             )
 
-        } catch (
-            exception: Exception
-        ) {
+        if (grid == null) {
 
-            /*
-             * Vision should never crash the
-             * screen-capture service.
-             */
-            emptyState()
+            return UniversalBlockState(
+                board = null,
+                pieces = emptyList(),
+                confidence = 0f
+            )
         }
+
+        // ========================================================
+        // 2. DETECT OCCUPIED BOARD CELLS
+        // ========================================================
+
+        val occupied =
+            detectBoardCells(
+                bitmap = bitmap,
+                grid = grid
+            )
+
+        val board =
+            UniversalBoard(
+                rows = grid.rows,
+                columns = grid.columns,
+                occupied = occupied
+            )
+
+        // ========================================================
+        // 3. DETECT PIECES
+        // ========================================================
+
+        val pieces =
+            UniversalPieceDetector.detect(
+                bitmap = bitmap,
+                grid = grid
+            )
+
+        // ========================================================
+        // 4. CONFIDENCE
+        // ========================================================
+
+        val gridConfidence =
+            grid.score
+                .coerceIn(
+                    0f,
+                    1f
+                )
+
+        val boardConfidence =
+            calculateBoardConfidence(
+                bitmap = bitmap,
+                grid = grid,
+                occupied = occupied
+            )
+
+        val pieceConfidence =
+            calculatePieceConfidence(
+                pieces = pieces
+            )
+
+        /*
+         * Grid is the most important component.
+         */
+        val confidence =
+            (
+                gridConfidence * 0.45f +
+                        boardConfidence * 0.30f +
+                        pieceConfidence * 0.25f
+                )
+                .coerceIn(
+                    0f,
+                    1f
+                )
+
+        // ========================================================
+        // 5. RETURN UNIVERSAL STATE
+        // ========================================================
+
+        return UniversalBlockState(
+            board = board,
+            pieces = pieces,
+            confidence = confidence,
+
+            boardLeft =
+                grid.left,
+
+            boardTop =
+                grid.top,
+
+            boardRight =
+                grid.right,
+
+            boardBottom =
+                grid.bottom
+        )
     }
 
-    /**
-     * Detects the occupied/empty state of every
-     * board cell.
-     */
-    private fun detectBoard(
+    // ============================================================
+    // EMPTY STATE
+    // ============================================================
+
+    private fun emptyState():
+            UniversalBlockState {
+
+        return UniversalBlockState(
+            board = null,
+            pieces = emptyList(),
+            confidence = 0f
+        )
+    }
+
+    // ============================================================
+    // BOARD CELL DETECTION
+    // ============================================================
+
+    private fun detectBoardCells(
         bitmap: Bitmap,
-        grid: UniversalGridDetector.DetectedGrid
-    ): UniversalBoard {
+        grid: DetectedGrid
+    ): Array<BooleanArray> {
 
         val occupied =
             Array(
@@ -141,6 +179,12 @@ object UniversalVision {
                 )
             }
 
+        /*
+         * For each cell we inspect a small number of points
+         * around the center instead of scanning the complete cell.
+         *
+         * This keeps analysis fast.
+         */
         for (
             row in
             0 until grid.rows
@@ -161,191 +205,100 @@ object UniversalVision {
             }
         }
 
-        return UniversalBoard(
-            rows = grid.rows,
-            columns = grid.columns,
-            occupied = occupied
-        )
+        return occupied
     }
 
-    /**
-     * Determines whether a board cell contains
-     * a placed block.
-     *
-     * This uses several visual signals rather than
-     * a single fixed RGB color.
-     */
+    // ============================================================
+    // CELL OCCUPANCY
+    // ============================================================
+
     private fun isCellOccupied(
         bitmap: Bitmap,
-        grid: UniversalGridDetector.DetectedGrid,
+        grid: DetectedGrid,
         row: Int,
         column: Int
     ): Boolean {
 
+        val center =
+            UniversalGridDetector.cellCenter(
+                grid = grid,
+                row = row,
+                column = column,
+                bitmapWidth = bitmap.width,
+                bitmapHeight = bitmap.height
+            )
+                ?: return false
+
         val centerX =
-            grid.left +
-                    (
-                        column +
-                                0.5f
-                        ) *
-                    grid.cellWidth
+            center.first
 
         val centerY =
-            grid.top +
-                    (
-                        row +
-                                0.5f
-                        ) *
-                    grid.cellHeight
+            center.second
 
         /*
-         * Sample the inner part of the cell.
+         * Sample center + four inner points.
          */
-        val radiusX =
-            grid.cellWidth *
-                    0.25f
+        val offsets =
+            arrayOf(
+                0f to 0f,
 
-        val radiusY =
-            grid.cellHeight *
-                    0.25f
+                -0.22f to 0f,
+                0.22f to 0f,
 
-        var totalBrightness =
-            0f
+                0f to -0.22f,
+                0f to 0.22f
+            )
 
-        var totalColorStrength =
-            0f
-
-        var brightSamples =
-            0
-
-        var coloredSamples =
+        var occupiedSamples =
             0
 
         var totalSamples =
             0
 
-        val startX =
-            (
-                centerX -
-                        radiusX
-                )
-                .toInt()
-
-        val endX =
-            (
-                centerX +
-                        radiusX
-                )
-                .toInt()
-
-        val startY =
-            (
-                centerY -
-                        radiusY
-                )
-                .toInt()
-
-        val endY =
-            (
-                centerY +
-                        radiusY
-                )
-                .toInt()
-
         for (
-            y in
-            startY..endY
+            offset in
+            offsets
         ) {
 
+            val x =
+                (
+                    centerX +
+                            offset.first *
+                            grid.cellWidth
+                    )
+                    .toInt()
+
+            val y =
+                (
+                    centerY +
+                            offset.second *
+                            grid.cellHeight
+                    )
+                    .toInt()
+
             if (
+                x < 0 ||
+                x >= bitmap.width ||
                 y < 0 ||
                 y >= bitmap.height
             ) {
                 continue
             }
 
-            for (
-                x in
-                startX..endX
+            val pixel =
+                bitmap.getPixel(
+                    x,
+                    y
+                )
+
+            totalSamples++
+
+            if (
+                looksOccupied(
+                    pixel
+                )
             ) {
-
-                if (
-                    x < 0 ||
-                    x >= bitmap.width
-                ) {
-                    continue
-                }
-
-                val pixel =
-                    bitmap.getPixel(
-                        x,
-                        y
-                    )
-
-                val red =
-                    (
-                        pixel shr 16
-                    ) and 0xFF
-
-                val green =
-                    (
-                        pixel shr 8
-                    ) and 0xFF
-
-                val blue =
-                    pixel and 0xFF
-
-                val brightness =
-                    (
-                        red * 0.299f +
-                                green * 0.587f +
-                                blue * 0.114f
-                        )
-
-                val maximum =
-                    maxOf(
-                        red,
-                        green,
-                        blue
-                    )
-
-                val minimum =
-                    minOf(
-                        red,
-                        green,
-                        blue
-                    )
-
-                val colorStrength =
-                    (
-                        maximum -
-                                minimum
-                        )
-                        .toFloat()
-
-                totalBrightness +=
-                    brightness
-
-                totalColorStrength +=
-                    colorStrength
-
-                totalSamples++
-
-                if (
-                    brightness >=
-                    115f
-                ) {
-                    brightSamples++
-                }
-
-                if (
-                    colorStrength >=
-                    35f &&
-                    brightness >=
-                    45f
-                ) {
-                    coloredSamples++
-                }
+                occupiedSamples++
             }
         }
 
@@ -355,131 +308,318 @@ object UniversalVision {
             return false
         }
 
-        val averageBrightness =
-            totalBrightness /
-                    totalSamples
-
-        val averageColorStrength =
-            totalColorStrength /
-                    totalSamples
-
-        val brightRatio =
-            brightSamples.toFloat() /
-                    totalSamples.toFloat()
-
-        val coloredRatio =
-            coloredSamples.toFloat() /
-                    totalSamples.toFloat()
-
         /*
-         * A placed block generally produces
-         * stronger color/brightness than the
-         * empty board background.
+         * At least 2/5 samples should look like a block.
          */
-        val strongColor =
-            averageColorStrength >=
-                    30f &&
-                    coloredRatio >=
-                    0.12f
-
-        val strongBrightness =
-            averageBrightness >=
-                    120f &&
-                    brightRatio >=
-                    0.25f
-
-        /*
-         * Very colorful cells are usually occupied.
-         */
-        val colorfulCell =
-            averageColorStrength >=
-                    45f &&
-                    coloredRatio >=
-                    0.08f
-
-        return (
-            strongColor ||
-                    strongBrightness ||
-                    colorfulCell
-            )
+        return occupiedSamples >=
+                2
     }
 
-    /**
-     * Calculates confidence for the complete
-     * vision result.
-     */
-    private fun calculateConfidence(
-        gridConfidence: Float,
-        board: UniversalBoard,
-        pieces: List<UniversalBlockPiece>
+    // ============================================================
+    // PIXEL CLASSIFICATION
+    // ============================================================
+
+    private fun looksOccupied(
+        pixel: Int
+    ): Boolean {
+
+        val red =
+            (
+                pixel shr 16
+            ) and 0xFF
+
+        val green =
+            (
+                pixel shr 8
+            ) and 0xFF
+
+        val blue =
+            pixel and 0xFF
+
+        val maximum =
+            maxOf(
+                red,
+                green,
+                blue
+            )
+
+        val minimum =
+            minOf(
+                red,
+                green,
+                blue
+            )
+
+        val brightness =
+            (
+                red * 0.299f +
+                        green * 0.587f +
+                        blue * 0.114f
+                )
+
+        val saturation =
+            maximum -
+                    minimum
+
+        /*
+         * Strongly colored block.
+         *
+         * Blue / green / red / orange / purple etc.
+         */
+        if (
+            saturation >= 55 &&
+            brightness >= 50
+        ) {
+            return true
+        }
+
+        /*
+         * Bright block highlights.
+         */
+        if (
+            brightness >= 155 &&
+            saturation >= 30
+        ) {
+            return true
+        }
+
+        /*
+         * Golden / beige special blocks can have
+         * comparatively low saturation.
+         */
+        if (
+            red >= 120 &&
+            green >= 90 &&
+            brightness >= 105 &&
+            saturation >= 25
+        ) {
+            return true
+        }
+
+        return false
+    }
+
+    // ============================================================
+    // BOARD CONFIDENCE
+    // ============================================================
+
+    private fun calculateBoardConfidence(
+        bitmap: Bitmap,
+        grid: DetectedGrid,
+        occupied: Array<BooleanArray>
     ): Float {
 
-        var confidence =
-            gridConfidence
+        if (
+            grid.rows <= 0 ||
+            grid.columns <= 0
+        ) {
+            return 0f
+        }
+
+        val totalCells =
+            grid.rows *
+                    grid.columns
+
+        if (
+            totalCells <= 0
+        ) {
+            return 0f
+        }
+
+        var occupiedCount =
+            0
+
+        for (
+            row in
+            occupied
+        ) {
+
+            for (
+                cell in
+                row
+            ) {
+
+                if (cell) {
+                    occupiedCount++
+                }
+            }
+        }
+
+        /*
+         * An empty board is valid.
+         *
+         * Therefore occupancy itself must NOT determine
+         * whether the board exists.
+         */
+
+        val occupancyRatio =
+            occupiedCount.toFloat() /
+                    totalCells.toFloat()
+
+        /*
+         * Normal block games usually have a reasonable amount
+         * of empty space.
+         */
+        val occupancyScore =
+            when {
+
+                occupancyRatio <= 0.90f ->
+                    1f
+
+                occupancyRatio <= 0.97f ->
+                    0.75f
+
+                else ->
+                    0.45f
+            }
+
+        /*
+         * Square/regular geometry confidence.
+         */
+        val geometryDifference =
+            abs(
+                grid.cellWidth -
+                        grid.cellHeight
+            )
+
+        val geometryScore =
+            (
+                1f -
+                        geometryDifference /
+                        maxOf(
+                            grid.cellWidth,
+                            grid.cellHeight
+                        )
+                )
                 .coerceIn(
                     0f,
                     1f
                 )
 
-        /*
-         * A valid board is required.
-         */
-        if (
-            !board.isValid()
-        ) {
+        return (
+            occupancyScore * 0.45f +
+                    geometryScore * 0.55f
+            )
+            .coerceIn(
+                0f,
+                1f
+            )
+    }
 
-            return 0f
+    // ============================================================
+    // PIECE CONFIDENCE
+    // ============================================================
+
+    private fun calculatePieceConfidence(
+        pieces: List<UniversalBlockPiece>
+    ): Float {
+
+        if (
+            pieces.isEmpty()
+        ) {
+            /*
+             * No pieces can happen during:
+             * - loading
+             * - animation
+             * - game over
+             * - transition
+             *
+             * Therefore it is not a complete vision failure.
+             */
+            return 0.25f
         }
 
         /*
-         * Board detection bonus.
+         * Most block games provide 3 pieces.
+         * Other games may provide 1-5.
          */
-        confidence +=
-            0.10f
+        val countScore =
+            when {
 
-        /*
-         * Piece detection.
-         *
-         * We don't require exactly 3 pieces
-         * because some block games may use
-         * different numbers of pieces.
-         */
-        when {
-            pieces.size >= 3 -> {
-                confidence +=
+                pieces.size >= 3 ->
+                    1f
+
+                pieces.size == 2 ->
+                    0.75f
+
+                pieces.size == 1 ->
+                    0.45f
+
+                else ->
                     0.20f
             }
 
-            pieces.size == 2 -> {
-                confidence +=
-                    0.14f
-            }
+        /*
+         * Validate that each detected shape is reasonable.
+         */
+        var validShapes =
+            0
 
-            pieces.size == 1 -> {
-                confidence +=
-                    0.08f
+        for (
+            piece in
+            pieces
+        ) {
+
+            if (
+                piece.cells.isNotEmpty() &&
+                piece.cells.size <= 25
+            ) {
+                validShapes++
             }
         }
 
-        /*
-         * Clamp to 0..1.
-         */
-        return confidence.coerceIn(
-            0f,
-            1f
-        )
+        val shapeScore =
+            if (
+                pieces.isNotEmpty()
+            ) {
+
+                validShapes.toFloat() /
+                        pieces.size.toFloat()
+
+            } else {
+                0f
+            }
+
+        return (
+            countScore * 0.55f +
+                    shapeScore * 0.45f
+            )
+            .coerceIn(
+                0f,
+                1f
+            )
     }
 
-    /**
-     * Empty vision state used when detection fails.
-     */
-    private fun emptyState():
-            UniversalBlockState {
+    // ============================================================
+    // FAST BOARD OCCUPANCY HELPER
+    // ============================================================
 
-        return UniversalBlockState(
-            board = null,
-            pieces = emptyList(),
-            confidence = 0f
-        )
+    /**
+     * Returns the number of occupied cells.
+     *
+     * Useful for diagnostics.
+     */
+    fun occupiedCount(
+        state: UniversalBlockState
+    ): Int {
+
+        return state.board
+            ?.occupiedCount()
+            ?: 0
+    }
+
+    // ============================================================
+    // BOARD SIZE HELPER
+    // ============================================================
+
+    fun boardSize(
+        state: UniversalBlockState
+    ): String {
+
+        val board =
+            state.board
+                ?: return "UNKNOWN"
+
+        return "${board.rows}x${board.columns}"
     }
 }
