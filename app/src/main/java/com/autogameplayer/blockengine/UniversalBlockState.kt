@@ -5,20 +5,17 @@ package com.autogameplayer.blockengine
  * UNIVERSAL BLOCK STATE
  * ============================================================
  *
- * Shared data models for:
+ * Common data models used by:
  *
  * UniversalVision
  * UniversalPieceDetector
  * UniversalGridDetector
- * UniversalBlockSolver
  * Game Brain
  * Move Planner
  *
- * This file contains DATA MODELS ONLY.
- * It does not interact with the Android UI or game.
- * ============================================================
+ * These models are intentionally independent
+ * from any specific game.
  */
-
 
 // ============================================================
 // UNIVERSAL CELL
@@ -51,51 +48,29 @@ data class UniversalBlockPiece(
     val cells: List<UniversalCell>
 ) {
 
-    /**
-     * Number of cells in this piece.
-     */
     val cellCount: Int
         get() = cells.size
 
-    /**
-     * Minimum row.
-     */
     val minRow: Int
-        get() =
-            cells.minOfOrNull {
-                it.row
-            } ?: 0
+        get() = cells.minOfOrNull {
+            it.row
+        } ?: 0
 
-    /**
-     * Maximum row.
-     */
     val maxRow: Int
-        get() =
-            cells.maxOfOrNull {
-                it.row
-            } ?: 0
+        get() = cells.maxOfOrNull {
+            it.row
+        } ?: 0
 
-    /**
-     * Minimum column.
-     */
     val minColumn: Int
-        get() =
-            cells.minOfOrNull {
-                it.column
-            } ?: 0
+        get() = cells.minOfOrNull {
+            it.column
+        } ?: 0
 
-    /**
-     * Maximum column.
-     */
     val maxColumn: Int
-        get() =
-            cells.maxOfOrNull {
-                it.column
-            } ?: 0
+        get() = cells.maxOfOrNull {
+            it.column
+        } ?: 0
 
-    /**
-     * Width of piece.
-     */
     val width: Int
         get() =
             if (cells.isEmpty()) {
@@ -104,9 +79,6 @@ data class UniversalBlockPiece(
                 maxColumn - minColumn + 1
             }
 
-    /**
-     * Height of piece.
-     */
     val height: Int
         get() =
             if (cells.isEmpty()) {
@@ -116,19 +88,7 @@ data class UniversalBlockPiece(
             }
 
     /**
-     * Normalized representation.
-     *
-     * Example:
-     *
-     * (3,5)
-     * (4,5)
-     * (4,6)
-     *
-     * becomes:
-     *
-     * (0,0)
-     * (1,0)
-     * (1,1)
+     * Normalized shape.
      */
     val normalizedCells: List<UniversalCell>
         get() {
@@ -150,8 +110,10 @@ data class UniversalBlockPiece(
             return cells
                 .map {
                     UniversalCell(
-                        row = it.row - rowOffset,
-                        column = it.column - columnOffset
+                        row =
+                            it.row - rowOffset,
+                        column =
+                            it.column - columnOffset
                     )
                 }
                 .distinct()
@@ -164,9 +126,6 @@ data class UniversalBlockPiece(
                 )
         }
 
-    /**
-     * Check whether a cell exists in this piece.
-     */
     fun contains(
         row: Int,
         column: Int
@@ -179,7 +138,7 @@ data class UniversalBlockPiece(
     }
 
     /**
-     * Rotate piece by 90 degrees.
+     * Rotate piece 90 degrees clockwise.
      */
     fun rotate90(): UniversalBlockPiece {
 
@@ -211,12 +170,9 @@ data class UniversalBlockPiece(
                     .map {
                         UniversalCell(
                             row =
-                                it.row -
-                                        minRow,
-
+                                it.row - minRow,
                             column =
-                                it.column -
-                                        minColumn
+                                it.column - minColumn
                         )
                     }
                     .distinct()
@@ -244,9 +200,6 @@ data class UniversalBoard(
 
     companion object {
 
-        /**
-         * Creates an empty board.
-         */
         fun empty(
             rows: Int,
             columns: Int
@@ -263,9 +216,6 @@ data class UniversalBoard(
         }
     }
 
-    /**
-     * Check whether coordinate is inside board.
-     */
     fun isInside(
         row: Int,
         column: Int
@@ -277,9 +227,6 @@ data class UniversalBoard(
                 column < columns
     }
 
-    /**
-     * Check whether cell is occupied.
-     */
     fun isOccupied(
         row: Int,
         column: Int
@@ -292,9 +239,6 @@ data class UniversalBoard(
         return occupied[row][column]
     }
 
-    /**
-     * Check whether cell is empty.
-     */
     fun isEmpty(
         row: Int,
         column: Int
@@ -305,44 +249,39 @@ data class UniversalBoard(
     }
 
     /**
-     * ========================================================
+     * Number of occupied cells.
+     *
      * IMPORTANT:
-     * Compatibility function required by UniversalBlockSolver.
+     * This is a PROPERTY, not a function.
      *
-     * Solver calls:
-     *
-     * board.occupiedCount()
-     * ========================================================
+     * Correct:
+     * board.occupiedCount
      */
-    fun occupiedCount(): Int {
+    val occupiedCount: Int
+        get() {
 
-        var count = 0
+            var count = 0
 
-        for (row in 0 until rows) {
+            for (row in 0 until rows) {
 
-            for (column in 0 until columns) {
+                for (column in 0 until columns) {
 
-                if (occupied[row][column]) {
-                    count++
+                    if (occupied[row][column]) {
+                        count++
+                    }
                 }
             }
+
+            return count
         }
 
-        return count
-    }
+    val emptyCount: Int
+        get() {
 
-    /**
-     * Number of empty cells.
-     */
-    fun emptyCount(): Int {
+            return rows * columns -
+                    occupiedCount
+        }
 
-        return rows * columns -
-                occupiedCount()
-    }
-
-    /**
-     * Safe deep copy of board.
-     */
     fun copyBoard(): UniversalBoard {
 
         val copied =
@@ -360,55 +299,49 @@ data class UniversalBoard(
 
 
 // ============================================================
-// UNIVERSAL MOVE
-// ============================================================
-
-/**
- * Represents a calculated move.
- *
- * This is the output of UniversalBlockSolver.
- *
- * The solver DOES NOT execute this move.
- */
-data class UniversalMove(
-    val pieceId: Int,
-    val row: Int,
-    val column: Int,
-    val score: Double,
-    val clearedRows: Int = 0,
-    val clearedColumns: Int = 0,
-    val clearedLines: Int = 0,
-    val reason: String = ""
-) {
-
-    /**
-     * Whether this move clears at least one line.
-     */
-    val clearsLine: Boolean
-        get() = clearedLines > 0
-
-    /**
-     * Total number of cleared rows and columns.
-     */
-    val totalClears: Int
-        get() =
-            clearedRows +
-                    clearedColumns
-}
-
-
-// ============================================================
 // UNIVERSAL BLOCK STATE
 // ============================================================
 
 data class UniversalBlockState(
+
     val board: UniversalBoard?,
+
     val pieces: List<UniversalBlockPiece>,
-    val confidence: Float = 0f
+
+    val confidence: Float = 0f,
+
+    /**
+     * Detected board bounds in screenshot coordinates.
+     */
+    val boardLeft: Float = 0f,
+
+    val boardTop: Float = 0f,
+
+    val boardRight: Float = 0f,
+
+    val boardBottom: Float = 0f
+
 ) {
 
     /**
-     * Whether detected state can be used.
+     * Confidence converted to percentage.
+     *
+     * Example:
+     * 0.87f -> 87
+     */
+    val confidencePercent: Int
+        get() {
+
+            return (
+                confidence
+                    .coerceIn(0f, 1f) *
+                        100f
+                )
+                .toInt()
+        }
+
+    /**
+     * Whether the detected state is usable.
      */
     val isUsable: Boolean
         get() {
@@ -422,8 +355,7 @@ data class UniversalBlockState(
      * Number of detected pieces.
      */
     val pieceCount: Int
-        get() =
-            pieces.size
+        get() = pieces.size
 
     /**
      * Confidence threshold check.
@@ -434,6 +366,32 @@ data class UniversalBlockState(
 
         return confidence >= minimum
     }
+
+    /**
+     * Board width in screenshot coordinates.
+     */
+    val boardWidth: Float
+        get() =
+            (boardRight - boardLeft)
+                .coerceAtLeast(0f)
+
+    /**
+     * Board height in screenshot coordinates.
+     */
+    val boardHeight: Float
+        get() =
+            (boardBottom - boardTop)
+                .coerceAtLeast(0f)
+
+    /**
+     * Whether board bounds are valid.
+     */
+    val hasBoardBounds: Boolean
+        get() {
+
+            return boardRight > boardLeft &&
+                    boardBottom > boardTop
+        }
 }
 
 
@@ -448,9 +406,6 @@ data class UniversalVisionResult(
     val message: String = ""
 ) {
 
-    /**
-     * Whether vision produced a usable state.
-     */
     val isUsable: Boolean
         get() {
 
