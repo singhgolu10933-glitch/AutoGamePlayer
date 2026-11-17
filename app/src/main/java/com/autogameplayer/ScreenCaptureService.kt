@@ -133,11 +133,6 @@ class ScreenCaptureService : Service() {
     private var lastFrameTime =
         0L
 
-    /**
-     * Vision processing frequency.
-     *
-     * 250 ms ≈ 4 frames/second.
-     */
     private val FRAME_INTERVAL_MS =
         250L
 
@@ -440,11 +435,7 @@ class ScreenCaptureService : Service() {
 
         imageReader?.setOnImageAvailableListener(
             { reader ->
-
-                processLatestFrame(
-                    reader
-                )
-
+                processLatestFrame(reader)
             },
             captureHandler
         )
@@ -499,7 +490,6 @@ class ScreenCaptureService : Service() {
             now - lastFrameTime <
             FRAME_INTERVAL_MS
         ) {
-
             return
         }
 
@@ -541,7 +531,9 @@ class ScreenCaptureService : Service() {
                     bitmap
                 )
 
-                bitmap.recycle()
+                if (!bitmap.isRecycled) {
+                    bitmap.recycle()
+                }
             }
 
         } catch (
@@ -662,13 +654,9 @@ class ScreenCaptureService : Service() {
 
         try {
 
-            /*
-             * ====================================================
-             * UNIVERSAL VISION
-             * ====================================================
-             *
-             * No Block Blitz-specific vision.
-             */
+            // ====================================================
+            // UNIVERSAL VISION
+            // ====================================================
 
             val state =
                 UniversalVision.analyze(
@@ -689,22 +677,16 @@ class ScreenCaptureService : Service() {
             val detectedPieces =
                 pieces.size
 
+            /*
+             * UniversalBlockState now exposes
+             * confidencePercent as Int.
+             */
             val confidence =
                 state.confidencePercent
 
             // ====================================================
             // AI DECISION
             // ====================================================
-
-            /*
-             * AI calculates only.
-             *
-             * It does NOT interact with the game.
-             *
-             * No tap.
-             * No swipe.
-             * No drag.
-             */
 
             val bestMove =
                 if (
@@ -817,9 +799,7 @@ class ScreenCaptureService : Service() {
                         .joinToString(
                             separator = ";"
                         ) {
-
-                            "${it.row}," +
-                                    "${it.column}"
+                            "${it.row},${it.column}"
                         }
 
                 editor.putString(
@@ -938,19 +918,22 @@ class ScreenCaptureService : Service() {
                     0
                 )
 
+                val reason =
+                    when {
+
+                        board == null ->
+                            "Board not detected"
+
+                        pieces.isEmpty() ->
+                            "No pieces detected"
+
+                        else ->
+                            "No legal placement"
+                    }
+
                 editor.putString(
                     "best_move_reason",
-                    if (
-                        board == null
-                    ) {
-                        "Board not detected"
-                    } else if (
-                        pieces.isEmpty()
-                    ) {
-                        "No pieces detected"
-                    } else {
-                        "No legal placement"
-                    }
+                    reason
                 )
 
                 Log.d(
@@ -964,26 +947,8 @@ class ScreenCaptureService : Service() {
             // ====================================================
 
             /*
-             * IMPORTANT:
-             *
-             * Automatic gameplay remains OFF.
-             *
-             * Current pipeline:
-             *
-             * Screen
-             *   ↓
-             * Universal Vision
-             *   ↓
-             * Board + Pieces
-             *   ↓
-             * Universal Solver
-             *   ↓
-             * Best Move
-             *
-             * Accessibility actions will be connected
-             * only after detection is verified.
+             * Automatic gameplay intentionally remains OFF.
              */
-
             editor.putBoolean(
                 "automatic_action",
                 false
@@ -1000,6 +965,10 @@ class ScreenCaptureService : Service() {
             )
 
             editor.apply()
+
+            // ====================================================
+            // LOG RESULT
+            // ====================================================
 
             Log.d(
                 TAG,
@@ -1102,9 +1071,7 @@ class ScreenCaptureService : Service() {
         val channel =
             NotificationChannel(
                 CHANNEL_ID,
-
                 "Auto Game Player Screen Observation",
-
                 NotificationManager
                     .IMPORTANCE_LOW
             ).apply {
