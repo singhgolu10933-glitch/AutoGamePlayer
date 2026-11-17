@@ -33,29 +33,12 @@ object UniversalPieceDetector {
     // TUNING
     // ============================================================
 
-    /*
-     * Most block games currently provide 3 pieces.
-     *
-     * The detector can still return fewer/more when the UI
-     * is different.
-     */
     private const val DEFAULT_SLOT_COUNT = 3
 
-    /*
-     * Maximum number of cells allowed in one piece.
-     */
     private const val MAX_PIECE_CELLS = 25
 
-    /*
-     * Minimum block-like area.
-     */
     private const val MIN_COMPONENT_AREA = 20
 
-    /*
-     * Maximum connected-component search pixels.
-     *
-     * This keeps analysis fast.
-     */
     private const val MAX_SCAN_PIXELS = 900_000
 
     // ============================================================
@@ -222,11 +205,6 @@ object UniversalPieceDetector {
         grid: DetectedGrid
     ): Int {
 
-        /*
-         * The tray normally starts shortly below the board.
-         *
-         * We do NOT use a fixed pixel coordinate.
-         */
         val boardBottom =
             (
                 grid.bottom *
@@ -265,12 +243,6 @@ object UniversalPieceDetector {
         trayTop: Int
     ): Int {
 
-        /*
-         * Ignore very bottom UI/buttons/ads.
-         *
-         * The actual tray is normally contained in the
-         * lower-middle portion of the screen.
-         */
         val screenHeight =
             bitmap.height
 
@@ -298,11 +270,6 @@ object UniversalPieceDetector {
         grid: DetectedGrid
     ): Float {
 
-        /*
-         * Tray blocks are usually smaller than board cells.
-         *
-         * 0.30 - 0.55 of board cell size covers many games.
-         */
         val base =
             min(
                 grid.cellWidth,
@@ -363,11 +330,6 @@ object UniversalPieceDetector {
             return emptyList()
         }
 
-        /*
-         * Avoid scanning an enormous bitmap pixel-by-pixel.
-         *
-         * At normal phone resolutions this is still fast.
-         */
         val scanWidth =
             width
 
@@ -397,10 +359,6 @@ object UniversalPieceDetector {
         val components =
             ArrayList<Component>()
 
-        /*
-         * Step size 2 is substantially faster while still
-         * preserving block-shaped cells.
-         */
         val step =
             if (
                 estimatedCellSize >= 20f
@@ -621,10 +579,6 @@ object UniversalPieceDetector {
         step: Int
     ): Component? {
 
-        val height =
-            trayBottom -
-                    trayTop
-
         val queueX =
             IntArray(
                 4096
@@ -718,9 +672,6 @@ object UniversalPieceDetector {
                     y
                 )
 
-            /*
-             * Four-neighbour flood fill.
-             */
             val nx =
                 intArrayOf(
                     x + step,
@@ -825,9 +776,6 @@ object UniversalPieceDetector {
                     minY +
                     1
 
-        /*
-         * Reject huge UI elements.
-         */
         if (
             componentWidth >
             estimatedCellSize * 2.8f ||
@@ -1142,9 +1090,6 @@ object UniversalPieceDetector {
             maximum -
                     minimum
 
-        /*
-         * Main colored block detection.
-         */
         if (
             saturation >= 45 &&
             brightness >= 45
@@ -1152,9 +1097,6 @@ object UniversalPieceDetector {
             return true
         }
 
-        /*
-         * Bright yellow / orange / white-gold blocks.
-         */
         if (
             brightness >= 120 &&
             saturation >= 20
@@ -1162,10 +1104,6 @@ object UniversalPieceDetector {
             return true
         }
 
-        /*
-         * Purple / blue / red / green blocks usually
-         * have strong channel differences.
-         */
         if (
             maximum >= 115 &&
             saturation >= 35
@@ -1207,10 +1145,6 @@ object UniversalPieceDetector {
                 component.height
                     .toFloat()
 
-            /*
-             * A single tray block is normally approximately
-             * square.
-             */
             val aspect =
                 max(
                     width,
@@ -1230,9 +1164,6 @@ object UniversalPieceDetector {
                 continue
             }
 
-            /*
-             * Reject tiny text/icon noise.
-             */
             if (
                 width <
                 estimatedCellSize * 0.15f ||
@@ -1242,9 +1173,6 @@ object UniversalPieceDetector {
                 continue
             }
 
-            /*
-             * Reject giant controls.
-             */
             if (
                 width >
                 estimatedCellSize * 1.6f ||
@@ -1287,20 +1215,11 @@ object UniversalPieceDetector {
             }
         }
 
-        /*
-         * Sort by horizontal position.
-         */
         val sorted =
             components.sortedBy {
                 it.centerX
             }
 
-        /*
-         * Instead of fixed coordinates, divide the screen
-         * into equal logical regions.
-         *
-         * This works for different screen sizes.
-         */
         for (
             component in
             sorted
@@ -1332,10 +1251,6 @@ object UniversalPieceDetector {
             )
         }
 
-        /*
-         * If slot assignment becomes uneven,
-         * redistribute by X clusters.
-         */
         val emptySlots =
             groups.count {
                 it.isEmpty()
@@ -1353,9 +1268,6 @@ object UniversalPieceDetector {
                 group.clear()
             }
 
-            /*
-             * Equal X clustering.
-             */
             for (
                 i in
                 sorted.indices
@@ -1397,7 +1309,7 @@ object UniversalPieceDetector {
     private fun convertToShape(
         components: List<Component>,
         estimatedCellSize: Float
-    ): List<Pair<Int, Int>> {
+    ): List<UniversalCell> {
 
         if (
             components.isEmpty()
@@ -1405,20 +1317,12 @@ object UniversalPieceDetector {
             return emptyList()
         }
 
-        /*
-         * Use component centers.
-         */
         val centers =
             components.map {
                 it.centerX to
                         it.centerY
             }
 
-        /*
-         * Find average distance between detected cells.
-         *
-         * Tray cells are smaller than board cells.
-         */
         val spacing =
             estimateSpacing(
                 centers = centers,
@@ -1442,7 +1346,7 @@ object UniversalPieceDetector {
             }
 
         val shape =
-            ArrayList<Pair<Int, Int>>()
+            ArrayList<UniversalCell>()
 
         for (
             center in
@@ -1470,21 +1374,20 @@ object UniversalPieceDetector {
                     .toInt()
 
             shape.add(
-                normalizedRow to
-                        normalizedColumn
+                UniversalCell(
+                    row = normalizedRow,
+                    column = normalizedColumn
+                )
             )
         }
 
-        /*
-         * Remove duplicates.
-         */
         return shape
             .distinct()
             .sortedWith(
-                compareBy<Pair<Int, Int>> {
-                    it.first
+                compareBy<UniversalCell> {
+                    it.row
                 }.thenBy {
-                    it.second
+                    it.column
                 }
             )
     }
@@ -1563,9 +1466,6 @@ object UniversalPieceDetector {
 
         distances.sort()
 
-        /*
-         * Median nearest-cell distance.
-         */
         val median =
             distances[
                 distances.size / 2
@@ -1583,8 +1483,8 @@ object UniversalPieceDetector {
     // ============================================================
 
     private fun normalizeCells(
-        cells: List<Pair<Int, Int>>
-    ): List<Pair<Int, Int>> {
+        cells: List<UniversalCell>
+    ): List<UniversalCell> {
 
         if (
             cells.isEmpty()
@@ -1594,31 +1494,27 @@ object UniversalPieceDetector {
 
         val minRow =
             cells.minOf {
-                it.first
+                it.row
             }
 
         val minColumn =
             cells.minOf {
-                it.second
+                it.column
             }
 
         return cells
             .map {
-                (
-                    it.first -
-                            minRow
-                    ) to
-                        (
-                            it.second -
-                                    minColumn
-                            )
+                UniversalCell(
+                    row = it.row - minRow,
+                    column = it.column - minColumn
+                )
             }
             .distinct()
             .sortedWith(
-                compareBy<Pair<Int, Int>> {
-                    it.first
+                compareBy<UniversalCell> {
+                    it.row
                 }.thenBy {
-                    it.second
+                    it.column
                 }
             )
     }
